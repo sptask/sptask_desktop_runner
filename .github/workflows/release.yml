@@ -1,0 +1,70 @@
+﻿name: Release Desktop Runner
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release Multi-Platform Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+          cache: true
+
+      - name: Install Zip / Build Tools
+        run: sudo apt-get update && sudo apt-get install -y zip tar
+
+      - name: Build Binaries
+        run: |
+          mkdir -p dist
+          VERSION="${{ github.ref_name }}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+            VERSION="v1.0.0-dev"
+          fi
+          
+          LDFLAGS="-s -w -X main.Version=$VERSION"
+
+          echo "🚀 Building for version: $VERSION"
+
+          # 1. Windows x64 (.exe)
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/sptask-runner-windows-amd64.exe .
+
+          # 2. macOS Apple Silicon (arm64)
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/sptask-runner-darwin-arm64 .
+          cd dist && zip -9 sptask-runner-darwin-arm64.zip sptask-runner-darwin-arm64 && rm sptask-runner-darwin-arm64 && cd ..
+
+          # 3. macOS Intel (amd64)
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/sptask-runner-darwin-amd64 .
+          cd dist && zip -9 sptask-runner-darwin-amd64.zip sptask-runner-darwin-amd64 && rm sptask-runner-darwin-amd64 && cd ..
+
+          # 4. Linux x64 (.tar.gz)
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/sptask-runner-linux-amd64 .
+          cd dist && tar -czf sptask-runner-linux-amd64.tar.gz sptask-runner-linux-amd64 && rm sptask-runner-linux-amd64 && cd ..
+
+      - name: Generate Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+          cd ..
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
