@@ -187,7 +187,7 @@ func main() {
 	}
 
 	// 2. WebSocket bağlantısını başlat ve canlı tut
-	runWebSocketClient(ctx, config, safeWS, watchDir)
+	runWebSocketClient(ctx, config, safeWS, watchDir, *frontendFlag, *noBrowserFlag)
 }
 
 // 1. Eşleştirme Akışı (Browser-Based Single Click Pairing)
@@ -276,7 +276,7 @@ func startPairingFlow(serverURL, frontendURL string, noBrowser bool) (string, er
 }
 
 // 2. WebSocket Bağlantısı ve Mesaj Döngüsü
-func runWebSocketClient(ctx context.Context, config *DeviceConfig, safeWS *SafeWebSocket, watchDir string) {
+func runWebSocketClient(ctx context.Context, config *DeviceConfig, safeWS *SafeWebSocket, watchDir string, frontendURL string, noBrowser bool) {
 	wsURL := getWebSocketURL(config.ServerURL, config.DeviceToken)
 
 	interrupt := make(chan os.Signal, 1)
@@ -285,8 +285,22 @@ func runWebSocketClient(ctx context.Context, config *DeviceConfig, safeWS *SafeW
 	for {
 		log.Printf("🔌 Spartask Sunucusuna bağlanılıyor: %s", config.ServerURL)
 
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		if err != nil {
+			if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+				log.Println("❌ Kayıtlı cihaz anahtarı sunucu tarafından reddedildi (cihaz veritabanında bulunamadı veya oturum geçersiz).")
+				log.Println("🔄 Yeni cihaz eşleştirme süreci başlatılıyor...")
+				newToken, pairErr := startPairingFlow(config.ServerURL, frontendURL, noBrowser)
+				if pairErr == nil && newToken != "" {
+					config.DeviceToken = newToken
+					_ = saveConfig(getConfigPath(), config)
+					wsURL = getWebSocketURL(config.ServerURL, config.DeviceToken)
+					log.Println("✅ Yeni cihaz başarıyla eşleştirildi. Bağlantı kuruluyor...")
+					continue
+				}
+				log.Printf("⚠️ Yeniden eşleştirme başarısız: %v. Lütfen --reset parametresi ile yeniden deneyin.", pairErr)
+			}
+
 			log.Printf("⚠️ Bağlantı kurulamadı: %v. 5 saniye sonra tekrar denenecek...", err)
 			time.Sleep(5 * time.Second)
 			continue
