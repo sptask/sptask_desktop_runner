@@ -1,4 +1,4 @@
-﻿# 🖥️ Spartask Desktop Runner
+# 🖥️ Spartask Desktop Runner
 
 Spartask Desktop Runner, yerel bilgisayarınızda (Windows, macOS, Linux) arka planda sessizce çalışan ve **Spartask Bulut Otomasyonları** ile güvenli WebSocket tüneli üzerinden haberleşen hafif bir Go masaüstü asistanıdır.
 
@@ -42,6 +42,8 @@ En son sürümleri doğrudan aşağıdaki bağlantılardan indirebilirsiniz:
 chmod +x sptask-runner
 ./sptask-runner
 ```
+
+> **Not (Windows SmartScreen):** Windows ilk kez çalıştırırken *"Windows kişisel bilgisayarınızı korudu"* uyarısı verebilir. Açılan pencerede **Ek Bilgi (More Info)** -> **Yine de Çalıştır (Run Anyway)** butonuna tıklayarak uygulamayı güvenle başlatabilirsiniz.
 
 ### 2. Komut Satırı Parametreleri
 ```bash

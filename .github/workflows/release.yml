@@ -1,4 +1,4 @@
-﻿name: Release Desktop Runner
+name: Release Desktop Runner
 
 on:
   push:
@@ -24,8 +24,10 @@ jobs:
           check-latest: true
           cache: true
 
-      - name: Install Zip / Build Tools
-        run: sudo apt-get update && sudo apt-get install -y zip tar
+      - name: Install Build Tools & WinRes
+        run: |
+          sudo apt-get update && sudo apt-get install -y zip tar
+          go install github.com/tc-hib/go-winres@latest
 
       - name: Build Binaries
         run: |
@@ -39,8 +41,14 @@ jobs:
 
           echo "🚀 Building for version: $VERSION"
 
+          # 0. Generate Windows Resources (Icon, Manifest, VersionInfo)
+          $(go env GOPATH)/bin/go-winres make --arch amd64 --product-version git-tag --file-version git-tag
+
           # 1. Windows x64 (.exe)
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/sptask-runner-windows-amd64.exe .
+
+          # Clean up syso so non-windows builds are completely clean
+          rm -f rsrc_windows_*.syso
 
           # 2. macOS Apple Silicon (arm64)
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/sptask-runner-darwin-arm64 .
