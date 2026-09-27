@@ -1,4 +1,4 @@
-﻿package protocol
+package protocol
 
 // WebSocket Mesaj Protokolü
 type DesktopMessageType string
@@ -12,6 +12,8 @@ const (
 	MsgTypeCommandResult DesktopMessageType = "COMMAND_RESULT"
 	MsgTypeEvent         DesktopMessageType = "EVENT"
 	MsgTypeError         DesktopMessageType = "ERROR"
+	MsgTypeAgentIntent   DesktopMessageType = "AGENT_INTENT"
+	MsgTypeAgentResult   DesktopMessageType = "AGENT_RESULT"
 )
 
 type DesktopMessage struct {
@@ -22,7 +24,7 @@ type DesktopMessage struct {
 }
 
 type DesktopCommandPayload struct {
-	Action     string         `json:"action"` // "file.read", "file.write", "file.move", "notify"
+	Action     string         `json:"action"` // "file.read", "file.write", "file.move", "file.list", "excel.read", "context.detect", "notify"
 	Parameters map[string]any `json:"parameters"`
 	TimeoutSec int            `json:"timeout_sec,omitempty"`
 }
@@ -34,6 +36,16 @@ type DesktopCommandResultPayload struct {
 }
 
 type DesktopEventPayload struct {
-	EventName string         `json:"event_name"` // "desktop.file_created"
+	EventName string         `json:"event_name"` // "file.created", "file.modified"
 	Data      map[string]any `json:"data"`
+}
+
+// OSContext: Desktop Runner tarafından işletim sisteminden yakalanan anlık bağlam bilgisi.
+type OSContext struct {
+	ActiveWindow      string         `json:"active_window"`       // Örn: "explorer.exe - Faturalar"
+	ActiveFolderPath  string         `json:"active_folder_path"`  // Örn: "C:\Muhasebe\Faturalar"
+	SelectedFiles     []string       `json:"selected_files"`      // Seçili dosya isimleri
+	DetectedFileTypes []string       `json:"detected_file_types"` // Klasörde tespit edilen uzantılar: [".xlsx", ".pdf"]
+	SampleHeaders     []string       `json:"sample_headers"`      // İlk tablodan okunan örnek sütun başlıkları
+	Metadata          map[string]any `json:"metadata,omitempty"`  // İlave işletim sistemi bağlamı
 }

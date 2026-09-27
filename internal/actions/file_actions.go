@@ -120,3 +120,30 @@ func WriteFile(filePath string, content string, mode string) error {
 
 	return nil
 }
+
+// ListFiles: Belirtilen dizindeki dosyaları (opsiyonel uzantı filtresiyle) listeler.
+func ListFiles(dirPath string, extension string) ([]string, error) {
+	if dirPath == "" {
+		return nil, errors.New("dizin yolu boş olamaz")
+	}
+	dirPath = filepath.Clean(dirPath)
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("dizin okunamadı (%s): %w", dirPath, err)
+	}
+
+	files := make([]string, 0)
+	extFilter := strings.ToLower(strings.TrimPrefix(extension, "*"))
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if extFilter == "" || strings.HasSuffix(strings.ToLower(name), extFilter) {
+			files = append(files, filepath.Join(dirPath, name))
+		}
+	}
+	return files, nil
+}
+

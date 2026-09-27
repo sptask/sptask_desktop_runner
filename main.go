@@ -25,6 +25,7 @@ import (
 	"github.com/sptask/sptask_desktop_runner/internal/autostart"
 	"github.com/sptask/sptask_desktop_runner/internal/notify"
 	"github.com/sptask/sptask_desktop_runner/internal/protocol"
+	oscontext "github.com/sptask/sptask_desktop_runner/internal/context"
 	"github.com/sptask/sptask_desktop_runner/internal/watcher"
 
 	"github.com/gorilla/websocket"
@@ -362,6 +363,12 @@ func handleIncomingCommand(safeWS *SafeWebSocket, msg protocol.DesktopMessage) {
 	case protocol.MsgTypePong:
 		// Heartbeat başarılı
 
+	case protocol.MsgTypeAgentResult:
+		summary, _ := msg.Payload["summary"].(string)
+		status, _ := msg.Payload["status"].(string)
+		log.Printf("🤖 Ajan Görev Sonucu [%s]: %s", status, summary)
+		notify.ShowNotification("Spartask Otonom Ajan", summary)
+
 	case protocol.MsgTypeCommand:
 		action, _ := msg.Payload["action"].(string)
 		params, _ := msg.Payload["parameters"].(map[string]any)
@@ -432,6 +439,51 @@ func handleIncomingCommand(safeWS *SafeWebSocket, msg protocol.DesktopMessage) {
 				res.Payload = map[string]any{
 					"success":   true,
 					"file_path": filePath,
+				}
+			}
+
+		case "file.list":
+			dirPath, _ := params["dir_path"].(string)
+			extension, _ := params["extension"].(string)
+			files, err := actions.ListFiles(dirPath, extension)
+			if err != nil {
+				res.Payload = map[string]any{"success": false, "error": err.Error()}
+			} else {
+				res.Payload = map[string]any{
+					"success": true,
+					"files":   files,
+					"count":   len(files),
+				}
+			}
+
+		case "excel.read":
+			filePath, _ := params["file_path"].(string)
+			sheetName, _ := params["sheet_name"].(string)
+			maxRows := 0
+			if mr, ok := params["max_rows"].(float64); ok {
+				maxRows = int(mr)
+			}
+			rows, headers, err := actions.ReadExcelRows(filePath, sheetName, maxRows)
+			if err != nil {
+				res.Payload = map[string]any{"success": false, "error": err.Error()}
+			} else {
+				res.Payload = map[string]any{
+					"success":   true,
+					"headers":   headers,
+					"rows":      rows,
+					"row_count": len(rows),
+				}
+			}
+
+		case "context.detect":
+			fallbackFolder, _ := params["fallback_folder"].(string)
+			osCtx, err := oscontext.DetectOSContext(context.Background(), fallbackFolder)
+			if err != nil {
+				res.Payload = map[string]any{"success": false, "error": err.Error()}
+			} else {
+				res.Payload = map[string]any{
+					"success":    true,
+					"os_context": osCtx,
 				}
 			}
 
