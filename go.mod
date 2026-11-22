@@ -3,6 +3,8 @@ module github.com/sptask/sptask_desktop_runner
 go 1.26.7
 
 require (
+	github.com/chromedp/cdproto v0.160.1
+	github.com/chromedp/chromedp v0.24.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/xuri/excelize/v2 v2.11.0
@@ -10,6 +12,7 @@ require (
 )
 
 require (
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/richardlehane/mscfb v1.0.7 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/tiendc/go-deepcopy v1.7.2 // indirect

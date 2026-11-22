@@ -11,6 +11,7 @@ Spartask Desktop Runner, yerel bilgisayarınızda (Windows, macOS, Linux) arka p
 - **Tek Tıkla Eşleştirme (Browser Pairing):** Karmaşık API anahtarlarına gerek kalmadan varsayılan tarayıcınızda açılan onay ekranıyla hesabınıza bağlanır.
 - **Otomatik Başlangıç (Autostart):** İsteğe bağlı olarak bilgisayar açılışında otomatik başlar.
 - **Sıfır Kurulum & Bağımsız Binary:** CGO veya dış DLL bağımlılığı yoktur, tek bir çalıştırılabilir dosya olarak çalışır.
+- **Tarayıcı İş Kaydı ve Oynatma (`browser.record.start`, `browser.replay`, `browser.stop`):** Kullanıcının tarayıcıda yaptığı işi adım listesi olarak kaydeder ve süreçler içinde yapay zeka kullanmadan aynı adımlarla tekrarlar. Bilgisayarda kurulu Chrome veya Edge kullanılır (ek indirme yok). Kayıt ve oynatma runner'a ait ayrı bir tarayıcı profilini (`%APPDATA%\Spartask\browser-profile`) paylaşır; şifre alanlarının değerleri bilgisayardan hiç çıkmaz; bot yalnızca kayıtta izin verilen sitelere gidebilir.
 
 ---
 
@@ -62,6 +63,13 @@ chmod +x sptask-runner
 
 # Versiyon kontrolü:
 ./sptask-runner --version
+
+# Kayıt/oynatma için belirli bir Chrome/Edge kullanma:
+./sptask-runner --browser-path="C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+# Geliştirme: eşleştirme olmadan kayıt al (pencere kapanınca dosyaya yazar) ve oynat
+./sptask-runner --record=https://ornek.com/giris --out=kayit.json
+./sptask-runner --replay=kayit.json [--headless]
 ```
 
 ---

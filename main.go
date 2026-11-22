@@ -70,10 +70,30 @@ func main() {
 	noBrowserFlag := flag.Bool("no-browser", false, "Tarayıcıyı otomatik açma, adresi konsola yaz")
 	versionFlag := flag.Bool("version", false, "Versiyon bilgisini göster")
 	flag.BoolVar(versionFlag, "v", false, "Versiyon bilgisini göster (kısa)")
+	browserPathFlag := flag.String("browser-path", "", "Kayıt ve oynatma için Chrome/Edge yolu (boşsa otomatik bulunur)")
+	recordFlag := flag.String("record", "", "Geliştirme: verilen adresten tarayıcı kaydı başlat (eşleştirme gerekmez)")
+	replayFlag := flag.String("replay", "", "Geliştirme: verilen kayıt dosyasını oynat (eşleştirme gerekmez)")
+	outFlag := flag.String("out", "recording.json", "Geliştirme: --record çıktısının yazılacağı dosya")
+	headlessFlag := flag.Bool("headless", false, "Geliştirme: --replay sırasında tarayıcı penceresini gösterme")
 	flag.Parse()
 
 	if *versionFlag {
 		fmt.Printf("Spartask Desktop Runner %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
+		return
+	}
+
+	if *recordFlag != "" || *replayFlag != "" {
+		devCtx, stopDev := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		var devErr error
+		if *recordFlag != "" {
+			devErr = runDevRecord(devCtx, *browserPathFlag, *recordFlag, *outFlag)
+		} else {
+			devErr = runDevReplay(devCtx, *browserPathFlag, *replayFlag, *headlessFlag)
+		}
+		stopDev()
+		if devErr != nil {
+			log.Fatalf("❌ %v", devErr)
+		}
 		return
 	}
 
@@ -150,6 +170,10 @@ func main() {
 	defer cancel()
 
 	safeWS := &SafeWebSocket{}
+	app, err := newRunnerApp(ctx, safeWS, *browserPathFlag)
+	if err != nil {
+		log.Fatalf("❌ Masaüstü asistanı hazırlanamadı: %v", err)
+	}
 
 	// 1. Folder Watcher Kurulumu
 	folderWatcher, err := watcher.NewFolderWatcher(watchDir, func(filePath, fileName string, fileSize int64, ext string) {
@@ -187,7 +211,11 @@ func main() {
 	}
 
 	// 2. WebSocket bağlantısını başlat ve canlı tut
-	runWebSocketClient(ctx, config, safeWS, watchDir, *frontendFlag, *noBrowserFlag)
+	runWebSocketClient(ctx, config, app, watchDir, *frontendFlag, *noBrowserFlag)
+
+	// Tarayıcı işleri kapanmadan çıkılmaz; kalıcı profil ancak düzgün kapanışta yazılır.
+	cancel()
+	app.Wait()
 }
 
 // 1. Eşleştirme Akışı (Browser-Based Single Click Pairing)
@@ -276,7 +304,8 @@ func startPairingFlow(serverURL, frontendURL string, noBrowser bool) (string, er
 }
 
 // 2. WebSocket Bağlantısı ve Mesaj Döngüsü
-func runWebSocketClient(ctx context.Context, config *DeviceConfig, safeWS *SafeWebSocket, watchDir string, frontendURL string, noBrowser bool) {
+func runWebSocketClient(ctx context.Context, config *DeviceConfig, app *runnerApp, watchDir string, frontendURL string, noBrowser bool) {
+	safeWS := app.ws
 	wsURL := getWebSocketURL(config.ServerURL, config.DeviceToken)
 
 	interrupt := make(chan os.Signal, 1)
@@ -307,6 +336,7 @@ func runWebSocketClient(ctx context.Context, config *DeviceConfig, safeWS *SafeW
 		}
 
 		safeWS.SetConn(conn)
+		app.flushOutbox()
 
 		log.Println("🟢 BAĞLANTI BAŞARILI: Spartask Asistanı arka planda aktif ve hazır!")
 		printBanner(config.DeviceName, watchDir)
@@ -325,7 +355,7 @@ func runWebSocketClient(ctx context.Context, config *DeviceConfig, safeWS *SafeW
 					return
 				}
 
-				handleIncomingCommand(safeWS, msg)
+				handleIncomingCommand(app, msg)
 			}
 		}()
 
@@ -369,7 +399,8 @@ func runWebSocketClient(ctx context.Context, config *DeviceConfig, safeWS *SafeW
 	}
 }
 
-func handleIncomingCommand(safeWS *SafeWebSocket, msg protocol.DesktopMessage) {
+func handleIncomingCommand(app *runnerApp, msg protocol.DesktopMessage) {
+	safeWS := app.ws
 	switch msg.Type {
 	case protocol.MsgTypeRegistered:
 		log.Println("🎉 Sunucu kaydı doğrulandı. Asistan görevleri dinliyor.")
@@ -388,6 +419,10 @@ func handleIncomingCommand(safeWS *SafeWebSocket, msg protocol.DesktopMessage) {
 		params, _ := msg.Payload["parameters"].(map[string]any)
 
 		log.Printf("⚡ Görev Alındı: %s", action)
+		if strings.HasPrefix(action, "browser.") {
+			app.handleBrowserCommand(msg.ID, action, params)
+			return
+		}
 
 		var res protocol.DesktopMessage
 		res.Type = protocol.MsgTypeCommandResult
