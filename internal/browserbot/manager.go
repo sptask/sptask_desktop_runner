@@ -238,8 +238,12 @@ func (m *Manager) runReplay(jobCtx context.Context, rec *Recording, opts ReplayO
 	if err := guard.install(tabCtx); err != nil {
 		return finish(fail(err, CodeBrowserError))
 	}
+	nav := newNavWatcher()
+	if err := nav.install(tabCtx); err != nil {
+		return finish(fail(err, CodeBrowserError))
+	}
 	runCtx, cancelRun := context.WithTimeout(tabCtx, opts.Timeout)
-	res := replay(runCtx, rec, guard)
+	res := replay(runCtx, rec, guard, nav)
 	cancelRun()
 	if !res.Success && jobCtx.Err() != nil {
 		res.ErrorCode = CodeCancelled

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,7 +19,9 @@ import (
 
 const testSecret = "s3cret-value"
 
-func newTestSite(t *testing.T, otherOrigin string) *httptest.Server {
+// saves counts the form posts the site received.
+func newTestSite(t *testing.T, otherOrigin string) (*httptest.Server, *atomic.Int32) {
+	saves := new(atomic.Int32)
 	t.Helper()
 	page := func(w http.ResponseWriter, body string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -52,6 +55,9 @@ func newTestSite(t *testing.T, otherOrigin string) *httptest.Server {
 <button type="submit" data-testid="save">Kaydet</button></form>`)
 	})
 	mux.HandleFunc("/save", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			saves.Add(1)
+		}
 		page(w, `<p id="result">Kayıt tamam: `+html.EscapeString(r.FormValue("customer"))+` / `+html.EscapeString(r.FormValue("city"))+`</p>`)
 	})
 	mux.HandleFunc("/away", func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +65,7 @@ func newTestSite(t *testing.T, otherOrigin string) *httptest.Server {
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, saves
 }
 
 func requireBrowser(t *testing.T) {
@@ -147,7 +153,7 @@ func replaySync(t *testing.T, m *Manager, rec Recording) ReplayResult {
 
 func TestRecordAndReplayLoginAndForm(t *testing.T) {
 	requireBrowser(t)
-	site := newTestSite(t, "http://127.0.0.1:1")
+	site, saves := newTestSite(t, "http://127.0.0.1:1")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m := NewManager(ctx, Config{ProfileDir: t.TempDir(), headlessRecording: true})
@@ -219,6 +225,7 @@ func TestRecordAndReplayLoginAndForm(t *testing.T) {
 
 	// Replay with another customer. The session cookie from the recording is
 	// still in the profile, so the login steps are skipped.
+	saves.Store(0)
 	rec.Steps[customer].Value = "Beta & Co"
 	rec.Steps = append(rec.Steps, Step{Type: StepExtractText, Selectors: []Selector{{Kind: SelectorCSS, Value: "#result"}}, OutputKey: "result"})
 	res := replaySync(t, m, rec)
@@ -230,6 +237,9 @@ func TestRecordAndReplayLoginAndForm(t *testing.T) {
 	}
 	if len(res.SkippedSteps) == 0 {
 		t.Fatalf("expected login steps to be skipped with a valid session")
+	}
+	if n := saves.Load(); n != 1 {
+		t.Fatalf("expected exactly one form post, got %d", n)
 	}
 
 	// A fresh profile has no session: the replay must stop at the login form.
@@ -250,7 +260,7 @@ func TestReplayBlocksOtherOrigins(t *testing.T) {
 		fmt.Fprint(w, "<p id=other>other site</p>")
 	}))
 	defer other.Close()
-	site := newTestSite(t, other.URL)
+	site, _ := newTestSite(t, other.URL)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m := NewManager(ctx, Config{ProfileDir: t.TempDir()})
@@ -281,7 +291,7 @@ func TestReplayBlocksOtherOrigins(t *testing.T) {
 // recording with the steps made so far.
 func TestRecordingEndsWhenTheBrowserQuits(t *testing.T) {
 	requireBrowser(t)
-	site := newTestSite(t, "http://127.0.0.1:1")
+	site, _ := newTestSite(t, "http://127.0.0.1:1")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m := NewManager(ctx, Config{ProfileDir: t.TempDir(), headlessRecording: true})

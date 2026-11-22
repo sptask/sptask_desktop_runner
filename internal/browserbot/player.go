@@ -127,7 +127,18 @@ func anyFound(resolveResult) bool { return true }
 
 type player struct {
 	guard   *originGuard
+	nav     *navWatcher
 	outputs map[string]string
+}
+
+// pageAction runs an action that may load another page and waits for that
+// page, so the next step never looks at the document being left.
+func (p *player) pageAction(ctx context.Context, wait time.Duration, action func() error) error {
+	before := p.nav.mark()
+	if err := action(); err != nil {
+		return err
+	}
+	return p.nav.settle(ctx, before, wait)
 }
 
 func (p *player) execStep(ctx context.Context, step *Step) error {
@@ -166,7 +177,7 @@ func (p *player) execStep(ctx context.Context, step *Step) error {
 		if err != nil {
 			return err
 		}
-		return chromedp.Do(ctx, chromedp.MouseClickXY(res.X, res.Y))
+		return p.pageAction(ctx, wait, func() error { return chromedp.Do(ctx, chromedp.MouseClickXY(res.X, res.Y)) })
 
 	case StepFill:
 		if _, err := waitElement(ctx, step, wait, resolveActionFocus, "", func(r resolveResult) bool { return !r.Disabled }); err != nil {
@@ -187,6 +198,8 @@ func (p *player) execStep(ctx context.Context, step *Step) error {
 		return nil
 
 	case StepSelect:
+		// A change handler may load another page.
+		before := p.nav.mark()
 		res, err := waitElement(ctx, step, wait, resolveActionSelect, step.Value, anyFound)
 		if err != nil {
 			return err
@@ -194,7 +207,7 @@ func (p *player) execStep(ctx context.Context, step *Step) error {
 		if !res.OK {
 			return botErr(CodeSelectorNotFound, "option %q was not found in the list", step.Value)
 		}
-		return nil
+		return p.nav.settle(ctx, before, wait)
 
 	case StepPress:
 		if len(step.Selectors) > 0 {
@@ -202,7 +215,7 @@ func (p *player) execStep(ctx context.Context, step *Step) error {
 				return err
 			}
 		}
-		return chromedp.Do(ctx, chromedp.KeyEvent(pressKeys[step.Key]))
+		return p.pageAction(ctx, wait, func() error { return chromedp.Do(ctx, chromedp.KeyEvent(pressKeys[step.Key])) })
 
 	case StepWaitFor:
 		_, err := waitElement(ctx, step, wait, resolveActionNone, "", anyFound)
@@ -247,8 +260,8 @@ func captureScreenshot(ctx context.Context) string {
 }
 
 // replay runs a validated recording in the tab of ctx.
-func replay(ctx context.Context, rec *Recording, guard *originGuard) ReplayResult {
-	p := &player{guard: guard, outputs: map[string]string{}}
+func replay(ctx context.Context, rec *Recording, guard *originGuard, nav *navWatcher) ReplayResult {
+	p := &player{guard: guard, nav: nav, outputs: map[string]string{}}
 	result := ReplayResult{Outputs: p.outputs}
 	for i := range rec.Steps {
 		step := &rec.Steps[i]
