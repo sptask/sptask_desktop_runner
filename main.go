@@ -141,9 +141,17 @@ func main() {
 			ServerURL:   *serverFlag,
 		}
 
-		// İlk eşleştirmede otomatik başlangıcı aç
-		if runtime.GOOS == "windows" {
-			if autoErr := autostart.Enable(); autoErr == nil {
+		// İlk eşleştirmede otomatik başlangıcı aç. Ayrı bir veri klasörüyle çalışan
+		// runner (test ya da ikinci kopya) açılış kaydına dokunmaz: kayıt bu klasörü
+		// bilmeden başlatır ve kullanıcının asıl runner'ının yerine geçerdi.
+		switch {
+		case runtime.GOOS != "windows":
+		case runnerOpts.dataDir != "":
+			log.Println("ℹ️ Ayrı veri klasörüyle çalışıyor; Windows açılış kaydı değiştirilmedi.")
+		default:
+			if autoErr := autostart.Enable(); autoErr != nil {
+				log.Printf("⚠️ Windows başlangıcına kayıt yapılamadı: %v", autoErr)
+			} else {
 				log.Println("🚀 Windows başlangıcına otomatik kayıt yapıldı.")
 			}
 		}
@@ -157,6 +165,10 @@ func main() {
 	watchDir := *watchDirFlag
 	if watchDir == "" && config.WatchDir != "" {
 		watchDir = config.WatchDir
+	}
+	if watchDir == "" && runnerOpts.dataDir != "" {
+		// A separate data folder keeps its inbox too, away from the user's Desktop.
+		watchDir = filepath.Join(runnerOpts.dataDir, "inbox")
 	}
 	if watchDir == "" {
 		watchDir = watcher.GetDefaultWatchDir()
