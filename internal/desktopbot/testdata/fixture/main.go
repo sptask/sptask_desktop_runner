@@ -25,6 +25,8 @@ const (
 	idSave    = 201
 	idDelete  = 202
 	idStatus  = 301
+	// idOK is what IsDialogMessage sends for Enter in a field: the form saves.
+	idOK = 1
 
 	wsOverlapped   = 0x00CF0000
 	wsVisible      = 0x10000000
@@ -43,6 +45,7 @@ const (
 	wmDestroy      = 0x0002
 	wmSetText      = 0x000C
 	cbAddString    = 0x0143
+	cbSetCurSel    = 0x014E
 	bnClicked      = 0
 	cwUseDefault   = 0x80000000
 	colorWindow    = 5
@@ -63,6 +66,7 @@ var (
 	isDialogMessageW = user32.NewProc("IsDialogMessageW")
 
 	out   string
+	clear bool
 	form  windows.HWND
 	saves int
 )
@@ -118,6 +122,16 @@ func save() error {
 	if _, err := f.Write(append(raw, '\n')); err != nil {
 		return fmt.Errorf("write %s: %w", out, err)
 	}
+	if clear {
+		// Like many forms, start the next entry empty. A recorder must not take
+		// this for the person emptying the fields.
+		for _, id := range []int{idName, idNote, idSecret} {
+			h, _, _ := getDlgItem.Call(uintptr(form), uintptr(id))
+			sendMessageW.Call(h, wmSetText, 0, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(""))))
+		}
+		combo, _, _ := getDlgItem.Call(uintptr(form), idPayment)
+		sendMessageW.Call(combo, cbSetCurSel, ^uintptr(0), 0)
+	}
 	status, _, _ := getDlgItem.Call(uintptr(form), idStatus)
 	sendMessageW.Call(status, wmSetText, 0, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(fmt.Sprintf("Kaydedildi: %d", saves)))))
 	return nil
@@ -126,7 +140,7 @@ func save() error {
 func wndProc(hwnd windows.HWND, m uint32, wParam, lParam uintptr) uintptr {
 	switch m {
 	case wmCommand:
-		if wParam&0xFFFF == idSave && (wParam>>16)&0xFFFF == bnClicked {
+		if id := wParam & 0xFFFF; (id == idSave || id == idOK) && (wParam>>16)&0xFFFF == bnClicked {
 			if err := save(); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(2)
@@ -151,6 +165,7 @@ func child(instance windows.Handle, class, title string, style uintptr, id int, 
 func main() {
 	title := flag.String("title", "SparTask Masaüstü Fikstürü", "window title")
 	flag.StringVar(&out, "out", "", "file that receives one JSON line per Save")
+	flag.BoolVar(&clear, "clear-on-save", false, "empty the form after every Save")
 	flag.Parse()
 	if out == "" {
 		fmt.Fprintln(os.Stderr, "-out is required")

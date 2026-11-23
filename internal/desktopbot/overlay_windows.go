@@ -19,9 +19,18 @@ import (
 
 // screenOverlay is a click-through, always-on-top window that shows whose
 // work the bot is doing and what it does now. Its thread also owns the
-// Shift+Esc hotkey and watches for physical (not injected) clicks and key
-// presses: either one stops the run. The hooks read only the event type and
-// the injected flag, never which key was pressed.
+// Shift+Esc hotkey and the low-level mouse and keyboard hooks.
+//
+// While the bot replays, a physical (not injected) click or key press stops
+// the run; the hooks read only the event type and the injected flag.
+//
+// While a person teaches (record mode) the overlay is a small badge in the
+// corner and the hooks tell the recorder about left clicks and their screen
+// point, and about Enter, Escape, shortcuts and right clicks. To classify a
+// key the hook reads its virtual-key code and the modifiers held; only the
+// class (classifyKey) leaves the hook, never the key, so typed text is never
+// seen here: values are read from the fields afterwards. Injected input is
+// recorded too, so tests can teach; no bot runs during a recording (joblock).
 
 var (
 	modGdi32 = windows.NewLazySystemDLL("gdi32.dll")
@@ -82,6 +91,8 @@ const (
 	wmSysKeyDown      = 0x0104
 	wmLButtonDown     = 0x0201
 	wmRButtonDown     = 0x0204
+	llkhfAltDown      = 0x20
+	recordMargin      = 16
 	wmMButtonDown     = 0x0207
 	whKeyboardLL      = 13
 	whMouseLL         = 14
@@ -89,7 +100,6 @@ const (
 	llmhfInjected     = 0x1
 	modShift          = 0x0004
 	modNoRepeat       = 0x4000
-	vkEscape          = 0x1B
 	stopHotkeyID      = 1
 	transparentBkMode = 1
 	dtLeft            = 0x0
@@ -188,7 +198,10 @@ type overlayState struct {
 
 type screenOverlay struct {
 	op     operator.Operator
+	hint   string
 	onStop func()
+	// input is set in record mode; the hooks call it on their thread.
+	input func(hookEvent)
 
 	hwnd    windows.HWND
 	done    chan struct{}
@@ -223,11 +236,29 @@ func registerOverlayClass() error {
 // startOverlay shows the overlay and starts watching for the person at the
 // computer. onStop runs once, on the overlay thread, when they take over.
 func startOverlay(op operator.Operator, onStop func()) (*screenOverlay, error) {
+	return openOverlay(&screenOverlay{op: op.Normalized(), hint: operator.StopHint, onStop: onStop})
+}
+
+// startRecordingOverlay shows the recording badge with label (the programs
+// being recorded) and passes clicks and keys to input. onStop runs once when
+// the person presses Shift+Esc.
+func startRecordingOverlay(label string, onStop func(), input func(hookEvent)) (*screenOverlay, error) {
+	o := &screenOverlay{
+		op:     operator.Operator{Name: recordTitle, Color: recordColor}.Normalized(),
+		hint:   recordHint,
+		onStop: onStop,
+		input:  input,
+		state:  overlayState{label: label},
+	}
+	return openOverlay(o)
+}
+
+func openOverlay(o *screenOverlay) (*screenOverlay, error) {
 	makeDPIAware()
 	if err := registerOverlayClass(); err != nil {
 		return nil, err
 	}
-	o := &screenOverlay{op: op.Normalized(), onStop: onStop, done: make(chan struct{})}
+	o.done = make(chan struct{})
 	if !activeOverlay.CompareAndSwap(nil, o) {
 		return nil, botErr(CodeBusy, "another desktop overlay is showing")
 	}
@@ -284,6 +315,18 @@ func (o *screenOverlay) run(ready chan<- error) {
 		procDestroyWindow.Call(hwnd)
 		ready <- fmt.Errorf("watch for the person at the computer: %v", errors.Join(hookErr(kb, kbErr), hookErr(ms, msErr)))
 		return
+	}
+	if o.input != nil {
+		// The recording badge sits in the bottom-right corner, above the taskbar.
+		area, err := workArea()
+		if err != nil {
+			procDestroyWindow.Call(hwnd)
+			ready <- err
+			return
+		}
+		procSetWindowPos.Call(hwnd, hwndTopmost, uintptr(area.Right-overlayWidth-recordMargin), uintptr(area.Bottom-overlayHeight-recordMargin),
+			overlayWidth, overlayHeight, swpNoActivate|swpShowWindow)
+		procShowWindow.Call(hwnd, swShowNoActivate)
 	}
 	ready <- nil
 
@@ -380,8 +423,10 @@ func overlayWndProc(hwnd windows.HWND, msg uint32, wParam, lParam uintptr) uintp
 func keyboardHook(code int32, wParam uintptr, lParam unsafe.Pointer) uintptr {
 	if code >= 0 && (wParam == wmKeyDown || wParam == wmSysKeyDown) {
 		ev := (*kbdLLHook)(lParam)
-		if ev.flags&llkhfInjected == 0 {
-			if o := activeOverlay.Load(); o != nil {
+		if o := activeOverlay.Load(); o != nil {
+			if o.input != nil {
+				o.recordKey(ev)
+			} else if ev.flags&llkhfInjected == 0 {
 				o.takeOver()
 			}
 		}
@@ -393,14 +438,54 @@ func keyboardHook(code int32, wParam uintptr, lParam unsafe.Pointer) uintptr {
 func mouseHook(code int32, wParam uintptr, lParam unsafe.Pointer) uintptr {
 	if code >= 0 && (wParam == wmLButtonDown || wParam == wmRButtonDown || wParam == wmMButtonDown) {
 		ev := (*mouseLLHook)(lParam)
-		if ev.flags&llmhfInjected == 0 {
-			if o := activeOverlay.Load(); o != nil {
+		if o := activeOverlay.Load(); o != nil {
+			if o.input != nil {
+				o.recordMouse(wParam, ev)
+			} else if ev.flags&llmhfInjected == 0 {
 				o.takeOver()
 			}
 		}
 	}
 	r, _, _ := procCallNextHookEx.Call(0, uintptr(code), wParam, uintptr(lParam))
 	return r
+}
+
+// hookKind is what a recording hook saw.
+type hookKind int
+
+const (
+	hookClick hookKind = iota
+	hookKey
+	hookRightClick
+	hookShortcut
+)
+
+// hookEvent goes from the hooks to the recorder: a left click and its screen
+// point, or the class of a key (Enter or Escape), never the key itself.
+type hookEvent struct {
+	kind hookKind
+	x, y int32
+	key  keyClass
+}
+
+func (o *screenOverlay) recordKey(ev *kbdLLHook) {
+	switch c := classifyKey(ev.vkCode, keyHeld(vkShift), keyHeld(vkControl), ev.flags&llkhfAltDown != 0); c {
+	case keyStop:
+		o.takeOver()
+	case keyEnter, keyEscape:
+		o.input(hookEvent{kind: hookKey, key: c})
+	case keyShortcut:
+		o.input(hookEvent{kind: hookShortcut})
+	}
+}
+
+func (o *screenOverlay) recordMouse(wParam uintptr, ev *mouseLLHook) {
+	switch wParam {
+	case wmLButtonDown:
+		o.input(hookEvent{kind: hookClick, x: ev.pt.x, y: ev.pt.y})
+	case wmRButtonDown:
+		o.input(hookEvent{kind: hookRightClick})
+	}
 }
 
 // colorRef turns #rrggbb into a Windows COLORREF (0x00bbggrr). Operator
@@ -439,8 +524,15 @@ func (o *screenOverlay) paint(hwnd windows.HWND) {
 	defer procDeleteObject.Call(pen)
 	oldBrush, _, _ := procSelectObject.Call(hdc, brush)
 	oldPen, _, _ := procSelectObject.Call(hdc, pen)
-	procEllipse.Call(hdc, 1, 1, cursorSize, cursorSize)
-	procRoundRect.Call(hdc, pillLeft, cursorSize/2, overlayWidth-1, overlayHeight-1, 14, 14)
+	// The replay overlay is a cursor dot with the pill beside it; the
+	// recording badge is the pill alone.
+	left, top := int32(pillLeft), int32(cursorSize/2)
+	if o.input != nil {
+		left, top = 1, 1
+	} else {
+		procEllipse.Call(hdc, 1, 1, cursorSize, cursorSize)
+	}
+	procRoundRect.Call(hdc, uintptr(left), uintptr(top), overlayWidth-1, overlayHeight-1, 14, 14)
 	procSelectObject.Call(hdc, oldPen)
 	procSelectObject.Call(hdc, oldBrush)
 
@@ -452,9 +544,9 @@ func (o *screenOverlay) paint(hwnd windows.HWND) {
 		weight uintptr
 		top    int32
 	}{
-		{o.op.Name, 18, fwBold, cursorSize/2 + 4},
-		{label, 16, fwNormal, cursorSize/2 + 23},
-		{operator.StopHint, 13, fwNormal, cursorSize/2 + 41},
+		{o.op.Name, 18, fwBold, top + 4},
+		{label, 16, fwNormal, top + 23},
+		{o.hint, 13, fwNormal, top + 41},
 	}
 	face := windows.StringToUTF16Ptr("Segoe UI")
 	for _, l := range lines {
@@ -463,7 +555,7 @@ func (o *screenOverlay) paint(hwnd windows.HWND) {
 		}
 		font, _, _ := procCreateFontW.Call(uintptr(-l.height), 0, 0, 0, l.weight, 0, 0, 0, 0, 0, 0, clearTypeQuality, 0, uintptr(unsafe.Pointer(face)))
 		oldFont, _, _ := procSelectObject.Call(hdc, font)
-		r := windows.Rect{Left: pillLeft + 12, Top: l.top, Right: overlayWidth - 10, Bottom: l.top + l.height + 2}
+		r := windows.Rect{Left: left + 12, Top: l.top, Right: overlayWidth - 10, Bottom: l.top + l.height + 2}
 		text := windows.StringToUTF16Ptr(l.text)
 		procDrawTextW.Call(hdc, uintptr(unsafe.Pointer(text)), ^uintptr(0), uintptr(unsafe.Pointer(&r)), dtLeft|dtSingleLine|dtVCenter|dtEndEllipsis)
 		procSelectObject.Call(hdc, oldFont)

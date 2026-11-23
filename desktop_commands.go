@@ -7,14 +7,19 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sptask/sptask_desktop_runner/internal/desktopbot"
+	"github.com/sptask/sptask_desktop_runner/internal/notify"
 )
 
 const (
-	actionDesktopReplay = "desktop.replay"
-	actionDesktopStop   = "desktop.stop"
+	actionDesktopRecordStart = "desktop.record.start"
+	actionDesktopReplay      = "desktop.replay"
+	actionDesktopStop        = "desktop.stop"
+
+	eventDesktopRecordingCompleted = "desktop.recording_completed"
 )
 
 // dataDir is the folder of device.json: approvals, the browser profile and
@@ -32,6 +37,8 @@ func (a *runnerApp) handleDesktopCommand(msgID, action string, params map[string
 			return
 		}
 		switch action {
+		case actionDesktopRecordStart:
+			a.startDesktopRecording(msgID, params)
 		case actionDesktopReplay:
 			a.startDesktopReplay(msgID, params)
 		case actionDesktopStop:
@@ -41,6 +48,32 @@ func (a *runnerApp) handleDesktopCommand(msgID, action string, params map[string
 			a.reply(msgID, map[string]any{"success": false, "error": "unknown desktop action " + action})
 		}
 	}()
+}
+
+// startDesktopRecording starts teaching: the person at this computer works in
+// the approved programs of allowed_apps until Shift+Esc, desktop.stop or the
+// time limit, and the steps reach the server as an event through the outbox.
+func (a *runnerApp) startDesktopRecording(msgID string, params map[string]any) {
+	id, _ := params["recording_id"].(string)
+	var apps []string
+	if err := decodeParam(params, "allowed_apps", &apps); err != nil {
+		a.reply(msgID, map[string]any{"success": false, "error": err.Error(), "error_code": desktopbot.CodeInvalidRecording})
+		return
+	}
+	opts := desktopbot.RecordOptions{MaxDuration: time.Duration(intParam(params, "max_duration_sec")) * time.Second}
+	err := a.desk.StartRecording(id, apps, opts, func(rec desktopbot.Recording) {
+		log.Printf("🎬 Masaüstü kaydı tamamlandı: %s (%d adım)", rec.ID, len(rec.Steps))
+		a.deliverEvent(eventDesktopRecordingCompleted, rec.ID, map[string]any{"recording": rec})
+		notify.ShowNotification("Spartask Asistanı", "Masaüstü kaydınız Spartask'a gönderildi.")
+	})
+	if err != nil {
+		log.Printf("❌ Masaüstü kaydı başlatılamadı: %v", err)
+		a.reply(msgID, map[string]any{"success": false, "error": err.Error(), "error_code": desktopbot.ErrorCode(err, desktopbot.CodeDesktopError)})
+		return
+	}
+	log.Printf("🎬 Masaüstü kaydı başladı: %s (%v)", id, apps)
+	notify.ShowNotification("Spartask Asistanı", "Kayıt başladı. İşinizi izinli programda yapın, bitince Shift+Esc tuşlarına basın.")
+	a.reply(msgID, map[string]any{"success": true, "recording_id": id})
 }
 
 func (a *runnerApp) startDesktopReplay(msgID string, params map[string]any) {
@@ -151,5 +184,32 @@ func runDevDesktopReplay(ctx context.Context, file string) error {
 	if !res.Success {
 		return fmt.Errorf("replay failed: %s", res.ErrorCode)
 	}
+	return nil
+}
+
+// runDevDesktopRecord records in the approved programs of apps (comma
+// separated) without pairing, until Shift+Esc or Ctrl+C, and writes the
+// recording to out.
+func runDevDesktopRecord(ctx context.Context, apps, out string) error {
+	policy, err := desktopbot.LoadPolicy(dataDir())
+	if err != nil {
+		return err
+	}
+	bot := desktopbot.NewManager(ctx, policy, runnerJobs)
+	done := make(chan desktopbot.Recording, 1)
+	if err := bot.StartRecording("dev", strings.Split(apps, ","), desktopbot.RecordOptions{}, func(r desktopbot.Recording) { done <- r }); err != nil {
+		return fmt.Errorf("start recording: %w", err)
+	}
+	fmt.Println("🎬 Kayıt başladı. İşinizi izinli programda yapın, bitince Shift+Esc tuşlarına basın.")
+	rec := <-done
+	bot.Wait()
+	raw, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode recording: %w", err)
+	}
+	if err := os.WriteFile(out, raw, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", out, err)
+	}
+	fmt.Printf("✅ %d adım kaydedildi: %s\n", len(rec.Steps), out)
 	return nil
 }

@@ -18,8 +18,6 @@ const (
 	// cursorPause lets the person at the computer see where the bot acts.
 	cursorPause  = 350 * time.Millisecond
 	inputUnicode = 0x0004
-	vkControl    = 0x11
-	vkA          = 0x41
 )
 
 // player replays one recording. Element handles never leave the UI
@@ -285,11 +283,6 @@ func textOf(e element) (string, error) {
 		return v, nil
 	}
 	return e.name()
-}
-
-// sameText compares values the way an edit box stores them.
-func sameText(a, b string) bool {
-	return strings.ReplaceAll(a, "\r\n", "\n") == strings.ReplaceAll(b, "\r\n", "\n")
 }
 
 // fill sets the value through UI Automation and reads it back. A control

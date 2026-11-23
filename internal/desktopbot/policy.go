@@ -167,3 +167,16 @@ func (p *Policy) check(path string, allowed map[string]bool) error {
 	}
 	return nil
 }
+
+// approvesName reports whether some program with the file name name (lower
+// case, "eczane.exe") is approved on this computer.
+func (p *Policy) approvesName(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key := range p.approved {
+		if filepath.Base(key) == name {
+			return true
+		}
+	}
+	return false
+}

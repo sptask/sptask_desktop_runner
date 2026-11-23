@@ -50,10 +50,14 @@ const (
 
 // Vtable slots. IUnknown takes 0-2.
 const (
+	slotAddRef  = 1
 	slotRelease = 2
 
 	// IUIAutomation
+	slotCompareElements      = 3
 	slotElementFromHandle    = 6
+	slotElementFromPoint     = 7
+	slotGetFocusedElement    = 8
 	slotGetControlViewWalker = 14
 
 	// IUIAutomationTreeWalker
@@ -80,7 +84,11 @@ const (
 	slotValueCurrentValue    = 4
 	slotValueIsReadOnly      = 5
 	slotExpandCollapseCollap = 4
+	slotExpandCollapseState  = 5
 )
+
+// expandCollapseExpanded is ExpandCollapseState_Expanded.
+const expandCollapseExpanded = 1
 
 // comObj is one COM interface pointer.
 type comObj struct{ ptr unsafe.Pointer }
@@ -96,6 +104,18 @@ func (o comObj) call(slot int, args ...uintptr) error {
 		return hresultError(hr)
 	}
 	return nil
+}
+
+// addRef returns a second reference to the same object; each one is released
+// once.
+func (o comObj) addRef() comObj {
+	if o.ptr == nil {
+		return comObj{}
+	}
+	vtbl := *(*unsafe.Pointer)(o.ptr)
+	fn := *(*uintptr)(unsafe.Add(vtbl, slotAddRef*int(unsafe.Sizeof(uintptr(0)))))
+	syscall.SyscallN(fn, uintptr(o.ptr))
+	return comObj{o.ptr}
 }
 
 func (o *comObj) release() {
@@ -206,8 +226,12 @@ func (u *uiaThread) close() {
 	<-u.done
 }
 
-// element is an IUIAutomationElement. It is only used on the UIA thread.
+// element is an IUIAutomationElement. Every reference is used by one UIA
+// thread at a time and released exactly once: the recorder hands its selector
+// thread a reference of its own (addRef), which that thread releases.
 type element struct{ comObj }
+
+func (e element) addRef() element { return element{e.comObj.addRef()} }
 
 func (u *uiaThread) elementFromHandle(hwnd windows.HWND) (element, error) {
 	var out unsafe.Pointer
@@ -218,6 +242,36 @@ func (u *uiaThread) elementFromHandle(hwnd windows.HWND) (element, error) {
 		return element{}, errors.New("window has no UI Automation element")
 	}
 	return element{comObj{out}}, nil
+}
+
+// elementFromPoint returns the control at a screen point (physical pixels).
+// POINT is passed by value: on 64-bit Windows its two int32 fields travel
+// packed in one register, x in the low half.
+func (u *uiaThread) elementFromPoint(x, y int32) (element, error) {
+	var out unsafe.Pointer
+	pt := uintptr(uint32(x)) | uintptr(uint32(y))<<32
+	if err := u.auto.call(slotElementFromPoint, pt, uintptr(unsafe.Pointer(&out))); err != nil {
+		return element{}, fmt.Errorf("element at point: %w", err)
+	}
+	return element{comObj{out}}, nil
+}
+
+// focusedElement returns the control that has the keyboard focus.
+func (u *uiaThread) focusedElement() (element, error) {
+	var out unsafe.Pointer
+	if err := u.auto.call(slotGetFocusedElement, uintptr(unsafe.Pointer(&out))); err != nil {
+		return element{}, fmt.Errorf("focused element: %w", err)
+	}
+	return element{comObj{out}}, nil
+}
+
+// sameElement reports whether two references are the same control.
+func (u *uiaThread) sameElement(a, b element) (bool, error) {
+	var same int32
+	if err := u.auto.call(slotCompareElements, uintptr(a.ptr), uintptr(b.ptr), uintptr(unsafe.Pointer(&same))); err != nil {
+		return false, fmt.Errorf("compare elements: %w", err)
+	}
+	return same != 0, nil
 }
 
 func (u *uiaThread) walk(slot int, from element) (element, error) {
@@ -307,6 +361,39 @@ func (e element) valueOf() (value string, ok bool, err error) {
 		return "", true, fmt.Errorf("read value: %w", err)
 	}
 	return readBSTR(b), true, nil
+}
+
+// valueState reads ValuePattern's value and whether it is read-only; ok is
+// false without the pattern. The caller never asks a password field.
+func (e element) valueState() (value string, readOnly, ok bool, err error) {
+	vp, err := e.pattern(patternValue, &iidValuePattern)
+	if err != nil || !vp.valid() {
+		return "", false, false, err
+	}
+	defer vp.release()
+	var ro int32
+	if err := vp.call(slotValueIsReadOnly, uintptr(unsafe.Pointer(&ro))); err != nil {
+		return "", false, true, fmt.Errorf("read value state: %w", err)
+	}
+	var b *uint16
+	if err := vp.call(slotValueCurrentValue, uintptr(unsafe.Pointer(&b))); err != nil {
+		return "", ro != 0, true, fmt.Errorf("read value: %w", err)
+	}
+	return readBSTR(b), ro != 0, true, nil
+}
+
+// expanded reports whether a drop-down's list is open.
+func (e element) expanded() (bool, error) {
+	p, err := e.pattern(patternExpandCollapse, &iidExpandCollapsePattern)
+	if err != nil || !p.valid() {
+		return false, err
+	}
+	defer p.release()
+	var state int32
+	if err := p.call(slotExpandCollapseState, uintptr(unsafe.Pointer(&state))); err != nil {
+		return false, fmt.Errorf("read expand state: %w", err)
+	}
+	return state == expandCollapseExpanded, nil
 }
 
 // setValue writes through ValuePattern; ok is false when the control has no

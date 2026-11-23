@@ -81,6 +81,7 @@ func main() {
 	revokeAppFlag := flag.String("revoke-app", "", "Bir programın masaüstü botu onayını kaldır (exe tam yolu)")
 	listAppsFlag := flag.Bool("list-apps", false, "Masaüstü botu için onaylı programları listele")
 	desktopReplayFlag := flag.String("desktop-replay", "", "Geliştirme: verilen masaüstü kayıt dosyasını oynat (eşleştirme gerekmez)")
+	desktopRecordFlag := flag.String("desktop-record", "", "Geliştirme: virgülle ayrılmış programlarda (eczane.exe) masaüstü kaydı başlat; --out dosyasına yazar")
 	flag.Parse()
 	runnerOpts = runnerOptions{dataDir: *dataDirFlag, browserDebugPort: *browserDebugPortFlag}
 
@@ -96,9 +97,14 @@ func main() {
 		return
 	}
 
-	if *desktopReplayFlag != "" {
+	if *desktopReplayFlag != "" || *desktopRecordFlag != "" {
 		devCtx, stopDev := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		devErr := runDevDesktopReplay(devCtx, *desktopReplayFlag)
+		var devErr error
+		if *desktopRecordFlag != "" {
+			devErr = runDevDesktopRecord(devCtx, *desktopRecordFlag, *outFlag)
+		} else {
+			devErr = runDevDesktopReplay(devCtx, *desktopReplayFlag)
+		}
 		stopDev()
 		if devErr != nil {
 			log.Fatalf("❌ %v", devErr)

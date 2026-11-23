@@ -2,6 +2,7 @@ package desktopbot
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,9 +20,9 @@ type ReplayOptions struct {
 	Operator operator.Operator
 }
 
-// Manager runs desktop replays one at a time, sharing the runner's job lock
-// with the browser bot. Every job goroutine is tracked; Wait returns after
-// the last one has ended.
+// Manager runs desktop replays and recordings one at a time, sharing the
+// runner's job lock with the browser bot. Every job goroutine is tracked;
+// Wait returns after the last one has ended.
 type Manager struct {
 	base   context.Context
 	policy *Policy
@@ -36,10 +37,11 @@ func NewManager(base context.Context, policy *Policy, jobs *joblock.Lock) *Manag
 	return &Manager{base: base, policy: policy, jobs: jobs, cancel: map[string]context.CancelFunc{}}
 }
 
-// Wait blocks until every replay goroutine has returned.
+// Wait blocks until every replay and recording goroutine has returned.
 func (m *Manager) Wait() { m.wg.Wait() }
 
-// Stop cancels the replay id, or every replay when id is empty.
+// Stop ends the replay or recording id, or every one when id is empty. A
+// stopped recording still delivers what was recorded.
 func (m *Manager) Stop(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -92,6 +94,69 @@ func (m *Manager) StartReplay(id string, rec Recording, opts ReplayOptions, onDo
 			res.ErrorCode = CodeCancelled
 		}
 		onDone(res)
+	}()
+	return nil
+}
+
+// StartRecording records, until Stop, Shift+Esc or the time limit, what the
+// person at this computer does in the programs of apps that are also
+// approved here. onDone always receives the recording, with what was done up
+// to the end.
+func (m *Manager) StartRecording(id string, apps []string, opts RecordOptions, onDone func(Recording)) error {
+	if strings.TrimSpace(id) == "" {
+		return botErr(CodeInvalidRecording, "recording_id is required")
+	}
+	list, err := normalizeApps(apps)
+	if err != nil {
+		return botErr(CodeInvalidRecording, "%w", err)
+	}
+	approved := false
+	for _, app := range list {
+		if deniedApps[app] {
+			return botErr(CodeAppBlocked, "%s can never be automated", app)
+		}
+		if m.policy.approvesName(app) {
+			approved = true
+		}
+	}
+	if !approved {
+		return botErr(CodeAppNotApproved, "none of %s is approved on this computer (sptask-runner --approve-app)", strings.Join(list, ", "))
+	}
+	if opts.MaxDuration <= 0 {
+		opts.MaxDuration = DefaultMaxRecording
+	}
+	if opts.MaxDuration > MaxRecordingDuration {
+		opts.MaxDuration = MaxRecordingDuration
+	}
+	if m.base.Err() != nil {
+		return botErr(CodeCancelled, "the runner is shutting down")
+	}
+	release, holder, ok := m.jobs.TryAcquire("desktop recording " + id)
+	if !ok {
+		return botErr(CodeBusy, "another job (%s) is running", holder)
+	}
+	ctx, cancel := context.WithTimeout(m.base, opts.MaxDuration)
+	rec, err := startRecorder(ctx, cancel, m.policy, id, list)
+	if err != nil {
+		cancel()
+		release()
+		return err
+	}
+	m.mu.Lock()
+	m.cancel[id] = cancel
+	m.mu.Unlock()
+
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		defer release()
+		defer func() {
+			m.mu.Lock()
+			delete(m.cancel, id)
+			m.mu.Unlock()
+			cancel()
+		}()
+		onDone(rec.wait())
 	}()
 	return nil
 }

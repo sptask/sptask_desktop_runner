@@ -176,24 +176,30 @@ func (n *node) matches(sel Selector) (bool, error) {
 // skipped, so the bot never guesses between two fields.
 func pick(nodes []*node, sels []Selector) (*node, error) {
 	for _, sel := range sels {
-		var found *node
-		count := 0
-		for _, n := range nodes {
-			ok, err := n.matches(sel)
-			if err != nil {
-				return nil, fmt.Errorf("read %s: %w", sel.Kind, err)
-			}
-			if ok {
-				count++
-				found = n
-				if count > 1 {
-					break
-				}
-			}
-		}
-		if count == 1 {
-			return found, nil
+		found, err := matchOne(nodes, sel)
+		if err != nil || found != nil {
+			return found, err
 		}
 	}
 	return nil, nil
+}
+
+// matchOne returns the only element that fits sel, or nil when none or
+// several do.
+func matchOne(nodes []*node, sel Selector) (*node, error) {
+	var found *node
+	for _, n := range nodes {
+		ok, err := n.matches(sel)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", sel.Kind, err)
+		}
+		if !ok {
+			continue
+		}
+		if found != nil {
+			return nil, nil
+		}
+		found = n
+	}
+	return found, nil
 }

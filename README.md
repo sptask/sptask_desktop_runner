@@ -102,16 +102,31 @@ Güvenlik kuralları:
   fareye tıklar, bir tuşa ya da **Shift+Esc**'ye basarsa iş `STOPPED_BY_USER` ile durur.
 - Bilgisayar kilitliyse iş `WORKSTATION_LOCKED` ile durur.
 
+Göster-öğret (kayıt): süreç tasarımında masaüstü kaydı başlatılınca kişi işi onaylı programda bir kez yapar,
+bitince **Shift+Esc**'ye basar. Ekranın sağ altında kırmızı "● Kaydediliyor" rozeti görünür.
+
+- Yalnızca kaydın izinli program listesinde olan **ve** bu bilgisayarda onaylanmış programlar kaydedilir;
+  başka pencerelerde yapılanlar alınmaz.
+- Alan değerleri, odak alandan çıkınca UI Automation ile okunur; tuş vuruşları kaydedilmez. Şifre alanları
+  hiç okunmaz (uyarı olarak bildirilir, süreçte parametre olarak eklenir).
+- Düğme, onay kutusu, sekme, liste satırı gibi tıklanabilir kontrollere tıklamalar, Enter ve Escape adım olur.
+  Kısayollar, F tuşları, menüler ve sağ tık kaydedilmez; kayıtla birlikte uyarı olarak döner.
+- Her kontrol için penceresinde tek olduğu doğrulanan seçiciler (automation id, ad, sınıf) ve yapısal yol
+  yazılır. Kayıt en fazla 2 saat sürer (varsayılan 30 dakika).
+
 ```bash
 # Programı onayla / onayı kaldır / onaylıları listele (yalnızca bu bilgisayarda)
 ./sptask-runner --approve-app="C:\Program Files\Eczane\eczane.exe"
 ./sptask-runner --revoke-app="C:\Program Files\Eczane\eczane.exe"
 ./sptask-runner --list-apps
 
+# Geliştirme: eşleştirme olmadan onaylı programlarda kayıt al (Shift+Esc ile biter, --out dosyasına yazar)
+./sptask-runner --desktop-record=eczane.exe --out=masaustu-kaydi.json
+
 # Geliştirme: eşleştirme olmadan bir masaüstü kaydını oynat
 ./sptask-runner --desktop-replay=masaustu-kaydi.json
 
-# Geliştirici testleri: küçük bir test penceresi açılır
+# Geliştirici testleri: küçük bir test penceresi açılır; kayıt testleri fareyi oynatır ve yazı yazar
 SPTASK_DESKTOP_TESTS=1 go test ./internal/desktopbot/
 ```
 

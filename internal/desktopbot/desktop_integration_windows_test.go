@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/windows"
+
 	"github.com/sptask/sptask_desktop_runner/internal/joblock"
 	"github.com/sptask/sptask_desktop_runner/internal/operator"
 )
@@ -30,7 +32,7 @@ type fixture struct {
 	win             topWindow
 }
 
-func startFixture(t *testing.T) *fixture {
+func startFixture(t *testing.T, args ...string) *fixture {
 	t.Helper()
 	if os.Getenv("SPTASK_DESKTOP_TESTS") != "1" {
 		t.Skip("set SPTASK_DESKTOP_TESTS=1 to open the fixture window")
@@ -45,7 +47,7 @@ func startFixture(t *testing.T) *fixture {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, out)
 	}
-	f.cmd = exec.Command(f.exe, "-out", f.out, "-title", f.title)
+	f.cmd = exec.Command(f.exe, append([]string{"-out", f.out, "-title", f.title}, args...)...)
 	if err := f.cmd.Start(); err != nil {
 		t.Fatalf("start fixture: %v", err)
 	}
@@ -63,7 +65,7 @@ func startFixture(t *testing.T) *fixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok {
+		if ok && uiaReady(w.hwnd) {
 			f.win = w
 			return f
 		}
@@ -176,6 +178,9 @@ func TestUIAVtableSlots(t *testing.T) {
 		}
 		if ok, err := byID["301"].el.setValue("x"); ok || err != nil {
 			return fmt.Errorf("a label took a value: %v %v", ok, err)
+		}
+		if err := recorderSlots(u, byID); err != nil {
+			return err
 		}
 		if ok, err := byID["201"].el.act(patternInvoke, &iidInvokePattern); !ok || err != nil {
 			return fmt.Errorf("InvokePattern.Invoke: %v %v", ok, err)
@@ -316,4 +321,32 @@ func TestDesktopReplayStopsWhenThePersonTakesOver(t *testing.T) {
 	if activeOverlay.Load() != nil {
 		t.Fatal("the overlay is still showing")
 	}
+}
+
+// uiaReady reports whether UI Automation already sees the form's controls:
+// a window that has just appeared may not have its element yet.
+func uiaReady(hwnd windows.HWND) bool {
+	u, err := startUIA()
+	if err != nil {
+		return false
+	}
+	defer u.close()
+	return u.do(func() error {
+		root, err := u.elementFromHandle(hwnd)
+		if err != nil {
+			return err
+		}
+		defer root.release()
+		nodes, err := u.descendants(root)
+		if err != nil {
+			return err
+		}
+		defer releaseNodes(nodes)
+		for _, n := range nodes {
+			if id, err := n.automationID(); err == nil && id == "301" {
+				return nil
+			}
+		}
+		return errNoElement
+	}) == nil
 }

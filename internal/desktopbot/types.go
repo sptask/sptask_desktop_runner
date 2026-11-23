@@ -160,16 +160,13 @@ func (r *Recording) Validate() error {
 	if len(r.Steps) > MaxSteps {
 		return fmt.Errorf("recording has %d steps, the limit is %d", len(r.Steps), MaxSteps)
 	}
-	if len(r.AllowedApps) == 0 || len(r.AllowedApps) > MaxAllowedApps {
-		return fmt.Errorf("recording needs between 1 and %d allowed apps", MaxAllowedApps)
+	apps, err := normalizeApps(r.AllowedApps)
+	if err != nil {
+		return fmt.Errorf("recording: %w", err)
 	}
-	allowed := make(map[string]bool, len(r.AllowedApps))
-	for _, a := range r.AllowedApps {
-		n, err := NormalizeApp(a)
-		if err != nil {
-			return fmt.Errorf("allowed app: %w", err)
-		}
-		allowed[n] = true
+	allowed := make(map[string]bool, len(apps))
+	for _, a := range apps {
+		allowed[a] = true
 	}
 	for i, s := range r.Steps {
 		if err := s.validate(allowed); err != nil {

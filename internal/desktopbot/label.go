@@ -34,3 +34,10 @@ func stepLabel(step *Step) string {
 	}
 	return label
 }
+
+// The recording badge: what the person at the computer sees while teaching.
+const (
+	recordTitle = "● Kaydediliyor"
+	recordHint  = "Bitirmek için Shift+Esc"
+	recordColor = "#d93025"
+)

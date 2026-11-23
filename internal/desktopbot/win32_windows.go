@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -131,19 +132,11 @@ func windowAlive(h windows.HWND) bool {
 
 // foregroundPID is the process of the window that receives the keyboard.
 func foregroundPID() uint32 {
-	h := windows.GetForegroundWindow()
+	h := rootWindow(windows.GetForegroundWindow())
 	if h == 0 {
 		return 0
 	}
-	root, _, _ := procGetAncestor.Call(uintptr(h), gaRoot)
-	if root != 0 {
-		h = windows.HWND(root)
-	}
-	var pid uint32
-	if _, err := windows.GetWindowThreadProcessId(h, &pid); err != nil {
-		return 0
-	}
-	return pid
+	return windowPID(h)
 }
 
 func bringToFront(h windows.HWND) {
@@ -239,4 +232,63 @@ func isPopupWindow(e element) (bool, error) {
 	}
 	root, _, _ := procGetAncestor.Call(uintptr(h), gaRoot)
 	return windows.HWND(root) == h, nil
+}
+
+var (
+	procWindowFromPoint       = modUser32.NewProc("WindowFromPoint")
+	procGetDoubleClickTime    = modUser32.NewProc("GetDoubleClickTime")
+	procGetAsyncKeyState      = modUser32.NewProc("GetAsyncKeyState")
+	procSystemParametersInfoW = modUser32.NewProc("SystemParametersInfoW")
+)
+
+const (
+	spiGetWorkArea = 0x0030
+	keyDownBit     = 0x8000
+)
+
+// rootWindow is the top-level window that h belongs to.
+func rootWindow(h windows.HWND) windows.HWND {
+	if h == 0 {
+		return 0
+	}
+	root, _, _ := procGetAncestor.Call(uintptr(h), gaRoot)
+	if root == 0 {
+		return h
+	}
+	return windows.HWND(root)
+}
+
+// windowAt is the top-level window under a screen point. POINT travels by
+// value, packed in one register on 64-bit Windows.
+func windowAt(x, y int32) windows.HWND {
+	h, _, _ := procWindowFromPoint.Call(uintptr(uint32(x)) | uintptr(uint32(y))<<32)
+	return rootWindow(windows.HWND(h))
+}
+
+func windowPID(h windows.HWND) uint32 {
+	var pid uint32
+	if _, err := windows.GetWindowThreadProcessId(h, &pid); err != nil {
+		return 0
+	}
+	return pid
+}
+
+func doubleClickTime() time.Duration {
+	ms, _, _ := procGetDoubleClickTime.Call()
+	return time.Duration(ms) * time.Millisecond
+}
+
+// keyHeld reports whether a modifier key is down right now.
+func keyHeld(vk int) bool {
+	s, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
+	return s&keyDownBit != 0
+}
+
+// workArea is the primary screen without the taskbar.
+func workArea() (windows.Rect, error) {
+	var r windows.Rect
+	if ok, _, err := procSystemParametersInfoW.Call(spiGetWorkArea, 0, uintptr(unsafe.Pointer(&r)), 0); ok == 0 {
+		return windows.Rect{}, fmt.Errorf("read the screen's work area: %w", err)
+	}
+	return r, nil
 }
