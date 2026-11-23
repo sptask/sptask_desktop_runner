@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -22,6 +23,10 @@ type Config struct {
 	// ProfileDir is the runner-owned browser profile shared by recording and
 	// replay, so a login made while recording stays valid for replays.
 	ProfileDir string
+	// DebugPort, when set, opens the browser to local debugging tools on
+	// 127.0.0.1. Only the --browser-debug-port command-line flag sets it: an
+	// end-to-end test drives the recording browser through it.
+	DebugPort int
 
 	// headlessRecording lets package tests drive a recording without a window.
 	headlessRecording bool
@@ -132,6 +137,12 @@ func newBrowser(parent context.Context, cfg Config, headless bool) (context.Cont
 	}
 	if headless {
 		opts = append(opts, chromedp.Headless)
+	}
+	if cfg.DebugPort > 0 {
+		opts = append(opts,
+			chromedp.Flag("remote-debugging-port", strconv.Itoa(cfg.DebugPort)),
+			chromedp.Flag("remote-debugging-address", "127.0.0.1"),
+		)
 	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parent, opts...)
 	tabCtx, cancelTab := chromedp.NewContext(allocCtx)

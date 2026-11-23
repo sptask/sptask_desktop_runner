@@ -70,6 +70,12 @@ chmod +x sptask-runner
 # Geliştirme: eşleştirme olmadan kayıt al (pencere kapanınca dosyaya yazar) ve oynat
 ./sptask-runner --record=https://ornek.com/giris --out=kayit.json
 ./sptask-runner --replay=kayit.json [--headless]
+
+# Ayrı bir veri klasörüyle çalışma (cihaz bilgisi, tarayıcı profili, giden kutusu):
+./sptask-runner --data-dir="C:\Test\runner"
+
+# Test: runner tarayıcısını yalnızca 127.0.0.1 üzerinde hata ayıklama portuyla açma
+./sptask-runner --browser-debug-port=9333
 ```
 
 ---

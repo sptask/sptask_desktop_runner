@@ -26,6 +26,27 @@ const (
 	eventRecordingCompleted = "browser.recording_completed"
 )
 
+// runnerOptions are command-line settings shared by the runner's parts.
+type runnerOptions struct {
+	// dataDir replaces the user's Spartask folder (device.json, outbox,
+	// browser profile), so a test runner never touches the real one.
+	dataDir string
+	// browserDebugPort opens the runner browser to local tools (tests only).
+	browserDebugPort int
+}
+
+var runnerOpts runnerOptions
+
+// browserConfig is the browser setup of this runner: the profile lives next
+// to device.json.
+func browserConfig(browserPath string) browserbot.Config {
+	return browserbot.Config{
+		ExecPath:   browserPath,
+		ProfileDir: filepath.Join(filepath.Dir(getConfigPath()), "browser-profile"),
+		DebugPort:  runnerOpts.browserDebugPort,
+	}
+}
+
 // runnerApp holds what the command handlers share. Browser commands run on
 // tracked goroutines so a long replay never blocks the WebSocket read loop.
 type runnerApp struct {
@@ -37,17 +58,13 @@ type runnerApp struct {
 }
 
 func newRunnerApp(ctx context.Context, ws *SafeWebSocket, browserPath string) (*runnerApp, error) {
-	profile, err := browserbot.DefaultProfileDir()
-	if err != nil {
-		return nil, fmt.Errorf("resolve browser profile: %w", err)
-	}
 	outbox := filepath.Join(filepath.Dir(getConfigPath()), "outbox")
 	if err := os.MkdirAll(outbox, 0o700); err != nil {
 		return nil, fmt.Errorf("create outbox %s: %w", outbox, err)
 	}
 	return &runnerApp{
 		ws:        ws,
-		bot:       browserbot.NewManager(ctx, browserbot.Config{ExecPath: browserPath, ProfileDir: profile}),
+		bot:       browserbot.NewManager(ctx, browserConfig(browserPath)),
 		outboxDir: outbox,
 	}, nil
 }
@@ -238,11 +255,7 @@ func (a *runnerApp) flushOutbox() {
 
 // runDevRecord records without pairing and writes the recording to out.
 func runDevRecord(ctx context.Context, browserPath, startURL, out string) error {
-	profile, err := browserbot.DefaultProfileDir()
-	if err != nil {
-		return err
-	}
-	bot := browserbot.NewManager(ctx, browserbot.Config{ExecPath: browserPath, ProfileDir: profile})
+	bot := browserbot.NewManager(ctx, browserConfig(browserPath))
 	done := make(chan browserbot.Recording, 1)
 	if err := bot.StartRecording("dev", startURL, 0, func(r browserbot.Recording) { done <- r }); err != nil {
 		return fmt.Errorf("start recording: %w", err)
@@ -277,11 +290,7 @@ func runDevReplay(ctx context.Context, browserPath, file string, headless bool) 
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		return fmt.Errorf("decode %s: %w", file, err)
 	}
-	profile, err := browserbot.DefaultProfileDir()
-	if err != nil {
-		return err
-	}
-	bot := browserbot.NewManager(ctx, browserbot.Config{ExecPath: browserPath, ProfileDir: profile})
+	bot := browserbot.NewManager(ctx, browserConfig(browserPath))
 	done := make(chan browserbot.ReplayResult, 1)
 	if err := bot.StartReplay("dev", rec, browserbot.ReplayOptions{Headless: headless}, func(r browserbot.ReplayResult) { done <- r }); err != nil {
 		return fmt.Errorf("start replay: %w", err)

@@ -75,7 +75,10 @@ func main() {
 	replayFlag := flag.String("replay", "", "Geliştirme: verilen kayıt dosyasını oynat (eşleştirme gerekmez)")
 	outFlag := flag.String("out", "recording.json", "Geliştirme: --record çıktısının yazılacağı dosya")
 	headlessFlag := flag.Bool("headless", false, "Geliştirme: --replay sırasında tarayıcı penceresini gösterme")
+	dataDirFlag := flag.String("data-dir", "", "Cihaz bilgisi, tarayıcı profili ve giden kutusu klasörü (boşsa kullanıcının Spartask klasörü)")
+	browserDebugPortFlag := flag.Int("browser-debug-port", 0, "Geliştirme/test: runner tarayıcısını yalnızca 127.0.0.1 üzerinde bu hata ayıklama portuyla açar")
 	flag.Parse()
+	runnerOpts = runnerOptions{dataDir: *dataDirFlag, browserDebugPort: *browserDebugPortFlag}
 
 	if *versionFlag {
 		fmt.Printf("Spartask Desktop Runner %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
@@ -564,7 +567,9 @@ func getWebSocketURL(serverURL, token string) string {
 
 func getConfigPath() string {
 	var dir string
-	if runtime.GOOS == "windows" {
+	if runnerOpts.dataDir != "" {
+		dir = runnerOpts.dataDir
+	} else if runtime.GOOS == "windows" {
 		dir = os.Getenv("APPDATA")
 		if dir == "" {
 			dir = os.Getenv("USERPROFILE")
