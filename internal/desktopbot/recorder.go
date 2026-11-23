@@ -73,6 +73,7 @@ const (
 	warnDoubleClick   = "Çift tıklama tek tıklama olarak kaydedildi; oynatmada kontrol bir kez tıklanır."
 	warnUnknownClick  = "Tıklanabilir olmayan bir kontrole yapılan tıklama kaydedilmedi."
 	warnElevated      = "Yönetici olarak çalışan bir programda yapılanlar kaydedilmedi."
+	warnNotApproved   = "%s bu bilgisayarda onaylı değil; orada yapılanlar kaydedilmedi (sptask-runner --approve-app)."
 	warnNoSelector    = "Bir kontrol tanınamadığı için adımı kaydedilmedi."
 	warnUnverified    = "Bir kontrol penceresinde yeniden bulunamadı; adımı oynatmadan önce kontrol edin."
 	warnSelectorLong  = "Çok uzun bir seçici atlandı."

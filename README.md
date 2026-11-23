@@ -110,7 +110,8 @@ bitince **Shift+Esc**'ye basar. Ekranın sağ altında kırmızı "● Kaydedili
 - Alan değerleri, odak alandan çıkınca UI Automation ile okunur; tuş vuruşları kaydedilmez. Şifre alanları
   hiç okunmaz (uyarı olarak bildirilir, süreçte parametre olarak eklenir).
 - Düğme, onay kutusu, sekme, liste satırı gibi tıklanabilir kontrollere tıklamalar, Enter ve Escape adım olur.
-  Kısayollar, F tuşları, menüler ve sağ tık kaydedilmez; kayıtla birlikte uyarı olarak döner.
+  Kısayollar, F tuşları, menüler ve sağ tık kaydedilmez; kayıtlı programda yapıldıysa uyarı olarak döner.
+  Listede olup bu bilgisayarda onaylı olmayan programdaki işler de uyarıyla bildirilir.
 - Her kontrol için penceresinde tek olduğu doğrulanan seçiciler (automation id, ad, sınıf) ve yapısal yol
   yazılır. Kayıt en fazla 2 saat sürer (varsayılan 30 dakika).
 

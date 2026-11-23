@@ -460,8 +460,8 @@ const (
 	hookShortcut
 )
 
-// hookEvent goes from the hooks to the recorder: a left click and its screen
-// point, or the class of a key (Enter or Escape), never the key itself.
+// hookEvent goes from the hooks to the recorder: a click and its screen
+// point, or the class of a key (Enter, Escape, a shortcut), never the key.
 type hookEvent struct {
 	kind hookKind
 	x, y int32
@@ -484,7 +484,7 @@ func (o *screenOverlay) recordMouse(wParam uintptr, ev *mouseLLHook) {
 	case wmLButtonDown:
 		o.input(hookEvent{kind: hookClick, x: ev.pt.x, y: ev.pt.y})
 	case wmRButtonDown:
-		o.input(hookEvent{kind: hookRightClick})
+		o.input(hookEvent{kind: hookRightClick, x: ev.pt.x, y: ev.pt.y})
 	}
 }
 

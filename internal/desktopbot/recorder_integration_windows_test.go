@@ -171,6 +171,35 @@ func (tc *teacher) click(aid string) {
 	tc.clickAt(x, y)
 }
 
+// openList clicks the arrow of a drop-down that also takes typed text.
+func (tc *teacher) openList(aid string) {
+	tc.t.Helper()
+	var x, y int32
+	err := tc.u.do(func() error {
+		root, err := tc.u.elementFromHandle(tc.f.win.hwnd)
+		if err != nil {
+			return err
+		}
+		defer root.release()
+		nodes, err := tc.u.descendants(root)
+		if err != nil {
+			return err
+		}
+		defer releaseNodes(nodes)
+		n, err := matchOne(nodes, Selector{Kind: SelectorAutomationID, Value: aid})
+		if err != nil || n == nil {
+			return fmt.Errorf("drop-down %s: %w", aid, errNoElement)
+		}
+		r, err := n.el.bounds()
+		x, y = r.Right-(r.Bottom-r.Top)/2, (r.Top+r.Bottom)/2
+		return err
+	})
+	if err != nil {
+		tc.t.Fatal(err)
+	}
+	tc.clickAt(x, y)
+}
+
 func (tc *teacher) clickItem(name string) {
 	tc.t.Helper()
 	x, y := tc.center(func(n *node) (bool, error) {
@@ -285,6 +314,8 @@ func TestDesktopRecordingReplaysWhatWasTaught(t *testing.T) {
 	tc.press("Escape") // closes the list, not a step
 	tc.click("104")
 	tc.clickItem("Kart")
+	tc.openList("105") // a drop-down that also takes typed text
+	tc.clickItem("İzmir")
 	tc.click("201") // Kaydet: the form saves and empties itself
 	tc.click("101")
 	tc.typeText("Mehmet")
@@ -306,7 +337,7 @@ func TestDesktopRecordingReplaysWhatWasTaught(t *testing.T) {
 			t.Fatalf("a password was recorded: %+v", s)
 		}
 	}
-	want := []string{"focus_window", "fill 101 Ayşe Yılmaz", "fill 102 Satır 1\r\nSatır 2", "select 104 Kart", "click 201", "fill 101 Mehmet", "press 101 Enter"}
+	want := []string{"focus_window", "fill 101 Ayşe Yılmaz", "fill 102 Satır 1\r\nSatır 2", "select 104 Kart", "fill 1001 İzmir", "click 201", "fill 101 Mehmet", "press 101 Enter"}
 	if strings.Join(got, " | ") != strings.Join(want, " | ") {
 		t.Fatalf("recorded steps:\n%q\nwant:\n%q\nwarnings: %v", got, want, rec.Warnings)
 	}
@@ -325,7 +356,7 @@ func TestDesktopRecordingReplaysWhatWasTaught(t *testing.T) {
 	saves := waitSaves(t, f, 4)
 	for i, want := range taught {
 		got := saves[2+i]
-		for _, field := range []string{"name", "note", "payment"} {
+		for _, field := range []string{"name", "note", "payment", "city"} {
 			if !sameText(fmt.Sprint(got[field]), fmt.Sprint(want[field])) {
 				t.Errorf("save %d %s: replay gave %q, teaching gave %q", i+1, field, got[field], want[field])
 			}

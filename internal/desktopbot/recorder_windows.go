@@ -191,6 +191,9 @@ type tracked struct {
 	stepType string // "" when its value is not recorded
 	password bool
 	props    controlProps
+	// combo is the drop-down the control belongs to: itself, or the
+	// drop-down around an edit box that takes typed text. Released by drop.
+	combo element
 	// initial is the value already accounted for; last is the value now.
 	initial, last string
 	rebaselineAt  time.Time
@@ -297,6 +300,11 @@ func (c *captureState) app(pid uint32) appInfo {
 	a := appInfo{name: strings.ToLower(baseName(exe))}
 	if err := c.r.policy.check(exe, c.r.allowed); err != nil {
 		a.err = err
+		if c.r.allowed[a.name] && ErrorCode(err, "") == CodeAppNotApproved {
+			// On the list but not approved here: the person should know why
+			// their work in it is missing.
+			a.warn = fmt.Sprintf(warnNotApproved, a.name)
+		}
 	} else if processElevated(pid) {
 		a.err = botErr(CodeAppBlocked, "%s runs as administrator", a.name)
 		a.warn = warnElevated
@@ -315,9 +323,14 @@ func (c *captureState) handle(ev inputEvent) {
 	case hookKey:
 		c.keyPress(ev)
 	case hookRightClick:
-		c.warn(warnRightClick)
+		// Only what happens in a recorded program is reported.
+		if c.app(windowPID(windowAt(ev.x, ev.y))).err == nil {
+			c.warn(warnRightClick)
+		}
 	case hookShortcut:
-		c.warn(warnShortcut)
+		if c.app(windowPID(rootWindow(windows.GetForegroundWindow()))).err == nil {
+			c.warn(warnShortcut)
+		}
 	}
 }
 
@@ -390,6 +403,7 @@ func (c *captureState) track(el element, hwnd windows.HWND, a appInfo) *tracked 
 		return t
 	}
 	t.ctype = ct
+	t.combo = c.comboOf(el, ct)
 	pw, err := el.isPassword()
 	if err != nil {
 		return t
@@ -456,6 +470,7 @@ func (c *captureState) flush() {
 func (c *captureState) drop() {
 	if c.cur != nil {
 		c.cur.el.release()
+		c.cur.combo.release()
 		c.cur = nil
 	}
 }
@@ -529,11 +544,30 @@ func (c *captureState) settle(at time.Time) {
 // drop-down keeps the focus while it is open.
 func (c *captureState) choosingFromList(root windows.HWND) bool {
 	t := c.cur
-	if t == nil || t.ctype != ctComboBox || root == t.hwnd {
+	if t == nil || !t.combo.valid() || root == t.hwnd {
 		return false
 	}
-	open, err := t.el.expanded()
+	open, err := t.combo.expanded()
 	return err == nil && open
+}
+
+// comboOf returns a reference to the drop-down that el is, or whose edit box
+// it is; an invalid element otherwise.
+func (c *captureState) comboOf(el element, ctype int32) element {
+	switch ctype {
+	case ctComboBox:
+		return el.addRef()
+	case ctEdit:
+		p, err := c.u.parent(el)
+		if err != nil || !p.valid() {
+			return element{}
+		}
+		if pct, err := p.controlType(); err == nil && pct == ctComboBox {
+			return p
+		}
+		p.release()
+	}
+	return element{}
 }
 
 func (c *captureState) recordClick(ev inputEvent, target element, ctype int32, root windows.HWND, a appInfo) {

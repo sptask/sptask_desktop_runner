@@ -1,7 +1,7 @@
 //go:build windows
 
 // Command fixture is a small Windows form for the desktop bot's tests: a name
-// box, a note box, a password box, a payment drop-down, a Save button and a
+// box, a note box, a password box, a payment drop-down, a city drop-down that also takes typed text, a Save button and a
 // disabled Delete button. Every Save writes the form to the -out file as one
 // JSON line, so a test sees exactly what the program received and how often.
 package main
@@ -22,6 +22,7 @@ const (
 	idNote    = 102
 	idSecret  = 103
 	idPayment = 104
+	idCity    = 105
 	idSave    = 201
 	idDelete  = 202
 	idStatus  = 301
@@ -39,6 +40,7 @@ const (
 	esMultiline    = 0x0004
 	esPassword     = 0x0020
 	esWantReturn   = 0x1000
+	cbsDropDown    = 0x0002
 	cbsDropDownLst = 0x0003
 	bsPushButton   = 0x0000
 	wmCommand      = 0x0111
@@ -108,7 +110,7 @@ func save() error {
 	secret := text(idSecret)
 	record := map[string]any{
 		"name": text(idName), "note": text(idNote), "secret_length": len([]rune(secret)),
-		"payment": text(idPayment), "save": saves,
+		"payment": text(idPayment), "city": text(idCity), "save": saves,
 	}
 	raw, err := json.Marshal(record)
 	if err != nil {
@@ -125,7 +127,7 @@ func save() error {
 	if clear {
 		// Like many forms, start the next entry empty. A recorder must not take
 		// this for the person emptying the fields.
-		for _, id := range []int{idName, idNote, idSecret} {
+		for _, id := range []int{idName, idNote, idSecret, idCity} {
 			h, _, _ := getDlgItem.Call(uintptr(form), uintptr(id))
 			sendMessageW.Call(h, wmSetText, 0, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(""))))
 		}
@@ -185,7 +187,7 @@ func main() {
 		os.Exit(2)
 	}
 	hwnd, _, err := createWindowExW.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(*title))),
-		wsOverlapped|wsVisible, cwUseDefault, cwUseDefault, 460, 340, 0, 0, uintptr(instance), 0)
+		wsOverlapped|wsVisible, cwUseDefault, cwUseDefault, 460, 380, 0, 0, uintptr(instance), 0)
 	if hwnd == 0 {
 		fmt.Fprintln(os.Stderr, "create window:", err)
 		os.Exit(2)
@@ -202,9 +204,15 @@ func main() {
 	for _, item := range []string{"Nakit", "Kart", "Havale"} {
 		sendMessageW.Call(uintptr(combo), cbAddString, 0, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(item))))
 	}
-	child(instance, "BUTTON", "Kaydet", wsTabStop|bsPushButton, idSave, 130, 210, 120, 30)
-	child(instance, "BUTTON", "Sil", wsTabStop|bsPushButton|wsDisabled, idDelete, 300, 210, 120, 30)
-	child(instance, "STATIC", "Hazır", 0, idStatus, 16, 256, 400, 20)
+	// A drop-down that also takes typed text: the focus is in its own edit box.
+	child(instance, "STATIC", "Şehir:", 0, 0, 16, 200, 110, 20)
+	city := child(instance, "COMBOBOX", "", wsTabStop|wsVScroll|cbsDropDown, idCity, 130, 198, 290, 120)
+	for _, item := range []string{"Ankara", "İstanbul", "İzmir"} {
+		sendMessageW.Call(uintptr(city), cbAddString, 0, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(item))))
+	}
+	child(instance, "BUTTON", "Kaydet", wsTabStop|bsPushButton, idSave, 130, 246, 120, 30)
+	child(instance, "BUTTON", "Sil", wsTabStop|bsPushButton|wsDisabled, idDelete, 300, 246, 120, 30)
+	child(instance, "STATIC", "Hazır", 0, idStatus, 16, 292, 400, 20)
 
 	var m msg
 	for {
