@@ -101,6 +101,9 @@ Güvenlik kuralları:
 - Bot çalışırken ekranda AI çalışanın renkli imleci, adı ve yaptığı adım görünür. Bilgisayarın başındaki kişi
   fareye tıklar, bir tuşa ya da **Shift+Esc**'ye basarsa iş `STOPPED_BY_USER` ile durur.
 - Bilgisayar kilitliyse iş `WORKSTATION_LOCKED` ile durur.
+- Bir adım başarısız olursa sonuçla birlikte o programın penceresinin görüntüsü gider (aynı programın öndeki hata
+  kutusu varsa onun). Görüntüyü pencere kendisi çizer: üstünü örten başka programlar ve ekranın geri kalanı
+  görüntüye girmez. Program kapalıysa, onaysızsa ya da bilgisayar kilitliyse görüntü alınmaz.
 
 Göster-öğret (kayıt): süreç tasarımında masaüstü kaydı başlatılınca kişi işi onaylı programda bir kez yapar,
 bitince **Shift+Esc**'ye basar. Ekranın sağ altında kırmızı "● Kaydediliyor" rozeti görünür.

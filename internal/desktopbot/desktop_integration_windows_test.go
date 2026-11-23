@@ -4,15 +4,20 @@ package desktopbot
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -278,8 +283,8 @@ func TestDesktopReplayRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res := replayNow(t, unapproved, fixtureRecording(f, fill), time.Minute); res.ErrorCode != CodeAppNotApproved {
-		t.Fatalf("an unapproved program was automated: %+v", res)
+	if res := replayNow(t, unapproved, fixtureRecording(f, fill), time.Minute); res.ErrorCode != CodeAppNotApproved || res.Screenshot != "" {
+		t.Fatalf("an unapproved program was automated or photographed: %+v", res)
 	}
 
 	p := approvedPolicy(t, f.exe)
@@ -288,17 +293,64 @@ func TestDesktopReplayRefuses(t *testing.T) {
 		t.Fatalf("a disabled button was clicked: %+v", res)
 	}
 	missing := Step{Type: StepFill, Selectors: byAutomationID("999"), Value: "x", TimeoutMS: 1500}
-	if res := replayNow(t, p, fixtureRecording(f, missing), time.Minute); res.ErrorCode != CodeSelectorNotFound {
+	res := replayNow(t, p, fixtureRecording(f, missing), time.Minute)
+	if res.ErrorCode != CodeSelectorNotFound {
 		t.Fatalf("a missing control: %+v", res)
+	}
+	// The failure comes with a picture of the program's own window: no larger
+	// than the window on the screen and without black, unpainted areas (the
+	// form is light grey and white).
+	var r windows.Rect
+	if ok, _, err := procGetWindowRect.Call(uintptr(f.win.hwnd), uintptr(unsafe.Pointer(&r))); ok == 0 {
+		t.Fatalf("read the form's size: %v", err)
+	}
+	shot := decodeScreenshot(t, res.Screenshot)
+	if size := shot.Bounds().Size(); size.X <= 0 || size.Y <= 0 || size.X > int(r.Right-r.Left) || size.Y > int(r.Bottom-r.Top) {
+		t.Fatalf("the screenshot is %v, the form is %v; warnings: %v", size, r, res.Warnings)
+	}
+	if dark := darkShare(shot); dark > 0.15 {
+		t.Fatalf("%.0f%% of the screenshot is black", dark*100)
 	}
 	closed := fixtureRecording(f, fill)
 	closed.Steps[0].Window.Title = "Kapalı pencere"
-	if res := replayNow(t, p, closed, time.Minute); res.ErrorCode != CodeAppNotRunning {
+	if res := replayNow(t, p, closed, time.Minute); res.ErrorCode != CodeAppNotRunning || res.Screenshot != "" {
 		t.Fatalf("a closed window: %+v", res)
 	}
 	if got := f.saves(t); len(got) != 0 {
 		t.Fatalf("nothing should have been saved: %v", got)
 	}
+}
+
+// decodeScreenshot decodes a failure screenshot.
+func decodeScreenshot(t *testing.T, shot string) image.Image {
+	t.Helper()
+	if shot == "" {
+		t.Fatal("no screenshot")
+	}
+	raw, err := base64.StdEncoding.DecodeString(shot)
+	if err != nil {
+		t.Fatalf("screenshot is not base64: %v", err)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("screenshot is not a JPEG: %v", err)
+	}
+	return img
+}
+
+// darkShare is the share of nearly black pixels in img.
+func darkShare(img image.Image) float64 {
+	b := img.Bounds()
+	dark := 0
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if r>>8 < 24 && g>>8 < 24 && bl>>8 < 24 {
+				dark++
+			}
+		}
+	}
+	return float64(dark) / float64(b.Dx()*b.Dy())
 }
 
 func TestDesktopReplayStopsWhenThePersonTakesOver(t *testing.T) {

@@ -109,7 +109,10 @@ type ReplayResult struct {
 	FailedStep    *int              `json:"failed_step,omitempty"`
 	ErrorCode     string            `json:"error_code,omitempty"`
 	Error         string            `json:"error,omitempty"`
-	Warnings      []string          `json:"warnings,omitempty"`
+	// Screenshot is a base64 JPEG of the program window at the failed step,
+	// size capped. Other programs on the screen are never in it.
+	Screenshot string   `json:"screenshot,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
 }
 
 // BotError carries a machine-readable code next to the human message.

@@ -176,6 +176,9 @@ func runDevDesktopReplay(ctx context.Context, file string) error {
 	}
 	res := <-done
 	bot.Wait()
+	if res.Screenshot != "" {
+		res.Screenshot = fmt.Sprintf("<%d base64 karakter>", len(res.Screenshot))
+	}
 	out, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode result: %w", err)

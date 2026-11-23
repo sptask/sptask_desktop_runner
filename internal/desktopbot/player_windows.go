@@ -45,6 +45,13 @@ func (p *player) replay(ctx context.Context, rec *Recording) (res ReplayResult) 
 			if ctx.Err() != nil && res.ErrorCode == CodeDesktopError {
 				res.ErrorCode = CodeTimeout
 			}
+			if screenshotFitsFailure(res.ErrorCode) {
+				shot, err := p.failureShot(step)
+				if err != nil {
+					res.Warnings = append(res.Warnings, fmt.Sprintf("no screenshot of the failed step: %v", err))
+				}
+				res.Screenshot = shot
+			}
 			res.Outputs = p.outputs
 			return res
 		}
