@@ -96,6 +96,9 @@ func waitElement(ctx context.Context, step *Step, wait time.Duration, action, va
 	for {
 		res, err := resolveOnce(waitCtx, step.Selectors, action, value)
 		if err == nil {
+			if res.Found && pathMatchElsewhere(step, res) {
+				res.Found = false
+			}
 			last, lastErr = res, nil
 			if res.Found && accept(res) {
 				return res, nil
@@ -124,6 +127,15 @@ func waitElement(ctx context.Context, step *Step, wait time.Duration, action, va
 }
 
 func anyFound(resolveResult) bool { return true }
+
+// pathMatchElsewhere reports a match by the structural path on a page other
+// than the one the step was recorded on; such a match is not trusted.
+func pathMatchElsewhere(step *Step, res resolveResult) bool {
+	if step.PageURL == "" || res.Index < 0 || res.Index >= len(step.Selectors) {
+		return false
+	}
+	return step.Selectors[res.Index].Kind == SelectorPath && res.PageURL != step.PageURL
+}
 
 type player struct {
 	guard   *originGuard

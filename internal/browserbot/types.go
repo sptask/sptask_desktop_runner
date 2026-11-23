@@ -28,6 +28,10 @@ const (
 	SelectorCSS   = "css"
 	SelectorLabel = "label"
 	SelectorText  = "text"
+	// SelectorPath is the element's structural CSS path. It is the last resort:
+	// another page can have an element at the same path, so it only counts on
+	// the page the step was recorded on (Step.PageURL).
+	SelectorPath = "path"
 )
 
 // Error codes returned to the server. They let a process branch on the cause.
@@ -225,7 +229,7 @@ func (s *Step) validate(allowed map[string]bool) error {
 	}
 	for _, sel := range s.Selectors {
 		switch sel.Kind {
-		case SelectorCSS, SelectorLabel, SelectorText:
+		case SelectorCSS, SelectorLabel, SelectorText, SelectorPath:
 		default:
 			return fmt.Errorf("unknown selector kind %q", sel.Kind)
 		}

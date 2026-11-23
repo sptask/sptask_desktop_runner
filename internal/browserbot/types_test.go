@@ -115,3 +115,27 @@ func TestManagerRunsOneJobAtATime(t *testing.T) {
 		t.Fatalf("slot was not released: %v", err)
 	}
 }
+
+func TestPathMatchElsewhere(t *testing.T) {
+	step := &Step{PageURL: "https://ornek.com/form", Selectors: []Selector{
+		{Kind: SelectorCSS, Value: "#kaydet"},
+		{Kind: SelectorPath, Value: "body > form > button"},
+	}}
+	cases := []struct {
+		name string
+		res  resolveResult
+		want bool
+	}{
+		{"strong selector on another page", resolveResult{Index: 0, PageURL: "https://ornek.com/liste"}, false},
+		{"path on the recorded page", resolveResult{Index: 1, PageURL: "https://ornek.com/form"}, false},
+		{"path on another page", resolveResult{Index: 1, PageURL: "https://ornek.com/liste"}, true},
+	}
+	for _, c := range cases {
+		if got := pathMatchElsewhere(step, c.res); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+	if pathMatchElsewhere(&Step{Selectors: step.Selectors}, resolveResult{Index: 1, PageURL: "x"}) {
+		t.Error("a step without page_url must accept its path")
+	}
+}

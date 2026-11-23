@@ -81,7 +81,7 @@
       if (text && text.length <= MAX_TEXT) out.push({ kind: 'text', value: text, tag: tag });
     }
     const path = cssPath(el);
-    if (path) out.push({ kind: 'css', value: path });
+    if (path) out.push({ kind: 'path', value: path });
     return out.slice(0, 6);
   };
 

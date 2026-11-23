@@ -93,7 +93,7 @@ func sanitize(s Step) (Step, bool) {
 			continue
 		}
 		switch sel.Kind {
-		case SelectorCSS, SelectorLabel, SelectorText:
+		case SelectorCSS, SelectorLabel, SelectorText, SelectorPath:
 			kept = append(kept, sel)
 		}
 		if len(kept) == MaxSelectorsPerStep {

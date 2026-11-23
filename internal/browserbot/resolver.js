@@ -29,7 +29,7 @@ function (selectors, action, value) {
     const s = selectors[i];
     let els = [];
     try {
-      if (s.kind === 'css') els = Array.from(document.querySelectorAll(s.value));
+      if (s.kind === 'css' || s.kind === 'path') els = Array.from(document.querySelectorAll(s.value));
       else if (s.kind === 'label') els = byLabel(s.value);
       else if (s.kind === 'text') els = byText(s.value, s.tag);
     } catch (e) { continue; }
