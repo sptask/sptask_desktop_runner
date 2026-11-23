@@ -21,6 +21,11 @@
   const unique = (sel) => {
     try { return document.querySelectorAll(sel).length === 1; } catch (e) { return false; }
   };
+  const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  // A label or a text matches the element only if no other visible element
+  // carries it; otherwise the replay could pick the wrong one.
+  const uniqueLabel = (text) => Array.from(document.querySelectorAll('label')).filter(l => norm(l.textContent) === text && l.control && shown(l.control)).length === 1;
+  const uniqueText = (tag, text) => Array.from(document.querySelectorAll(tag)).filter(e => shown(e) && norm(e.innerText) === text).length === 1;
 
   const isTextField = (el) => {
     const tag = el.tagName;
@@ -75,10 +80,12 @@
     const aria = el.getAttribute('aria-label');
     if (aria) { const s = tag + '[aria-label="' + quote(aria) + '"]'; if (unique(s)) out.push({ kind: 'css', value: s }); }
     const label = labelText(el);
-    if (label) out.push({ kind: 'label', value: label });
+    if (label && uniqueLabel(label)) out.push({ kind: 'label', value: label });
+    const placeholder = el.getAttribute('placeholder');
+    if (placeholder) { const s = tag + '[placeholder="' + quote(placeholder) + '"]'; if (unique(s)) out.push({ kind: 'css', value: s }); }
     if (!isTextField(el) && tag !== 'select') {
       const text = norm(el.innerText);
-      if (text && text.length <= MAX_TEXT) out.push({ kind: 'text', value: text, tag: tag });
+      if (text && text.length <= MAX_TEXT && uniqueText(tag, text)) out.push({ kind: 'text', value: text, tag: tag });
     }
     const path = cssPath(el);
     if (path) out.push({ kind: 'path', value: path });
