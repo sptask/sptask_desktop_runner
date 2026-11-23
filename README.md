@@ -78,6 +78,10 @@ chmod +x sptask-runner
 ./sptask-runner --browser-debug-port=9333
 ```
 
+> Yeni (boş) bir `--data-dir` cihaz bilgisi taşımadığı için her seferinde yeniden eşleştirme ister ve web
+> panelinde yeni bir cihaz olarak görünür. Testlerde biriken eski cihazları **Masaüstü Asistanları (Desktop Runner)**
+> ekranından silin. Hata ayıklama portu tarayıcının tam denetimini verir: yalnızca test makinesinde kullanın.
+
 ---
 
 ## 🛠️ Kaynak Koddan Derleme
