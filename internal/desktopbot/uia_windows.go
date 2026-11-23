@@ -46,7 +46,26 @@ const (
 const (
 	clsctxInprocServer = 0x1
 	hrNoInterface      = 0x80004002
+	// A control that is still appearing (a list opening, a window being
+	// built) refuses actions with one of these; a moment later it accepts.
+	hrInvalidOperation    = 0x80131509
+	hrElementNotEnabled   = 0x80040200
+	hrElementNotAvailable = 0x80040201
 )
+
+// isNotReady says whether a UI Automation call failed because the control is
+// not ready yet, so the step should try again instead of failing.
+func isNotReady(err error) bool {
+	var hr hresultError
+	if !errors.As(err, &hr) {
+		return false
+	}
+	switch uint32(hr) {
+	case hrInvalidOperation, hrElementNotEnabled, hrElementNotAvailable:
+		return true
+	}
+	return false
+}
 
 // Vtable slots. IUnknown takes 0-2.
 const (

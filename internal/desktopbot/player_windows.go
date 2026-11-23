@@ -263,6 +263,10 @@ func click(e element) error {
 		iid *windows.GUID
 	}{{patternInvoke, &iidInvokePattern}, {patternToggle, &iidTogglePattern}, {patternSelectionItem, &iidSelectionItemPattern}} {
 		ok, err := e.act(pat.id, pat.iid)
+		if isNotReady(err) {
+			// The control is still appearing; nothing was clicked.
+			return retry(CodeSelectorNotFound, "the control did not take the click yet: %v", err)
+		}
 		if err != nil {
 			return fmt.Errorf("click: %w", err)
 		}
@@ -343,6 +347,10 @@ func (p *player) selectItem(step *Step, e element) error {
 	// choice, so a list without Invoke is selected and then closed, and the
 	// read-back below tells whether the choice stayed.
 	ok, err := choice.el.act(patternInvoke, &iidInvokePattern)
+	if isNotReady(err) {
+		// The list is still opening; nothing was chosen.
+		return retry(CodeValueNotSet, "the list did not take %q: %v", step.Value, err)
+	}
 	if err != nil {
 		return fmt.Errorf("choose %q: %w", step.Value, err)
 	}
