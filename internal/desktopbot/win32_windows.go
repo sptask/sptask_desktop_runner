@@ -25,6 +25,7 @@ var (
 	procSendInput            = modUser32.NewProc("SendInput")
 	procIsWindow             = modUser32.NewProc("IsWindow")
 	procGetAncestor          = modUser32.NewProc("GetAncestor")
+	procSendMessageTimeoutW  = modUser32.NewProc("SendMessageTimeoutW")
 )
 
 const (
@@ -33,7 +34,21 @@ const (
 	inputKeyboard       = 1
 	keyeventfKeyUp      = 0x0002
 	maxWindowTitleChars = 512
+	cbGetDroppedState   = 0x0157
+	smtoAbortIfHung     = 0x0002
+	// comboAskTimeoutMS bounds a question to a program that may be busy.
+	comboAskTimeoutMS = 200
 )
+
+// comboDropped asks a native combo box whether its list is open.
+func comboDropped(h windows.HWND) (bool, error) {
+	var res uintptr
+	ok, _, err := procSendMessageTimeoutW.Call(uintptr(h), cbGetDroppedState, 0, 0, smtoAbortIfHung, comboAskTimeoutMS, uintptr(unsafe.Pointer(&res)))
+	if ok == 0 {
+		return false, fmt.Errorf("ask the drop-down whether its list is open: %w", err)
+	}
+	return res != 0, nil
+}
 
 // topWindow is a visible top-level window and the program behind it.
 type topWindow struct {

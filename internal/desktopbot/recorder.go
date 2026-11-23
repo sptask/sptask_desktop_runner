@@ -38,6 +38,7 @@ const (
 	ctHyperlink   int32 = 50005
 	ctImage       int32 = 50006
 	ctListItem    int32 = 50007
+	ctList        int32 = 50008
 	ctMenu        int32 = 50009
 	ctMenuBar     int32 = 50010
 	ctMenuItem    int32 = 50011

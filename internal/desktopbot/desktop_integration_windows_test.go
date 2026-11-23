@@ -70,7 +70,7 @@ func startFixture(t *testing.T, args ...string) *fixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok && uiaReady(w.hwnd) {
+		if ok && uiaReady(w.hwnd, "301") {
 			f.win = w
 			return f
 		}
@@ -376,8 +376,9 @@ func TestDesktopReplayStopsWhenThePersonTakesOver(t *testing.T) {
 }
 
 // uiaReady reports whether UI Automation already sees the form's controls:
-// a window that has just appeared may not have its element yet.
-func uiaReady(hwnd windows.HWND) bool {
+// a window that has just appeared may not have its element yet. statusID is
+// the automation id of the form's status line, its last control.
+func uiaReady(hwnd windows.HWND, statusID string) bool {
 	u, err := startUIA()
 	if err != nil {
 		return false
@@ -395,7 +396,7 @@ func uiaReady(hwnd windows.HWND) bool {
 		}
 		defer releaseNodes(nodes)
 		for _, n := range nodes {
-			if id, err := n.automationID(); err == nil && id == "301" {
+			if id, err := n.automationID(); err == nil && id == statusID {
 				return nil
 			}
 		}

@@ -117,6 +117,10 @@ bitince **Shift+Esc**'ye basar. Ekranın sağ altında kırmızı "● Kaydedili
   Listede olup bu bilgisayarda onaylı olmayan programdaki işler de uyarıyla bildirilir.
 - Her kontrol için penceresinde tek olduğu doğrulanan seçiciler (automation id, ad, sınıf) ve yapısal yol
   yazılır. Kayıt en fazla 2 saat sürer (varsayılan 30 dakika).
+- Klasik Win32, WinForms (eski erişilebilirlik kipindeki açılır listeler dahil) ve WPF pencereleriyle
+  kayıt ve oynatma testlerle denenir. Açılır listeden seçim fareyle ya da klavyeyle yapılabilir; listeyi
+  kapatan Enter/Escape adım olmaz. Delphi (VCL) programları aynı Windows denetimlerini kullanır ama
+  ayrıca denenmedi.
 
 ```bash
 # Programı onayla / onayı kaldır / onaylıları listele (yalnızca bu bilgisayarda)
@@ -130,7 +134,8 @@ bitince **Shift+Esc**'ye basar. Ekranın sağ altında kırmızı "● Kaydedili
 # Geliştirme: eşleştirme olmadan bir masaüstü kaydını oynat
 ./sptask-runner --desktop-replay=masaustu-kaydi.json
 
-# Geliştirici testleri: küçük bir test penceresi açılır; kayıt testleri fareyi oynatır ve yazı yazar
+# Geliştirici testleri: küçük test pencereleri açılır; kayıt testleri fareyi oynatır ve yazı yazar.
+# WinForms/WPF test formları Windows ile gelen .NET Framework derleyicisiyle (csc.exe) derlenir; yoksa atlanır.
 SPTASK_DESKTOP_TESTS=1 go test ./internal/desktopbot/
 ```
 

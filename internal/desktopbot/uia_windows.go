@@ -32,11 +32,13 @@ var (
 	iidTogglePattern         = windows.GUID{Data1: 0x94cf8058, Data2: 0x9b8d, Data3: 0x4ab9, Data4: [8]byte{0x8b, 0xfd, 0x4c, 0xd0, 0xa3, 0x3c, 0x8c, 0x70}}
 	iidSelectionItemPattern  = windows.GUID{Data1: 0xa8efa66a, Data2: 0x0fda, Data3: 0x421a, Data4: [8]byte{0x91, 0x94, 0x38, 0x02, 0x1f, 0x35, 0x78, 0xea}}
 	iidExpandCollapsePattern = windows.GUID{Data1: 0x619be086, Data2: 0x1f4e, Data3: 0x4ee4, Data4: [8]byte{0xba, 0xfa, 0x21, 0x01, 0x28, 0x73, 0x87, 0x30}}
+	iidSelectionPattern      = windows.GUID{Data1: 0x5ed5202e, Data2: 0xb2ac, Data3: 0x47a6, Data4: [8]byte{0xb6, 0x38, 0x4b, 0x0b, 0xf1, 0x40, 0xd7, 0x8e}}
 )
 
 // Pattern ids (UIAutomationClient.h, UIA_*PatternId).
 const (
 	patternInvoke         = 10000
+	patternSelection      = 10001
 	patternValue          = 10002
 	patternExpandCollapse = 10005
 	patternSelectionItem  = 10010
@@ -104,6 +106,11 @@ const (
 	slotValueIsReadOnly      = 5
 	slotExpandCollapseCollap = 4
 	slotExpandCollapseState  = 5
+	slotSelectionCurrent     = 3 // GetCurrentSelection
+
+	// IUIAutomationElementArray
+	slotArrayLength     = 3
+	slotArrayGetElement = 4
 )
 
 // expandCollapseExpanded is ExpandCollapseState_Expanded.
@@ -369,10 +376,14 @@ func (e element) pattern(id int, iid *windows.GUID) (comObj, error) {
 }
 
 // valueOf reads ValuePattern.CurrentValue; ok is false without the pattern.
+// A drop-down without a value (WPF) gives its selected item instead.
 func (e element) valueOf() (value string, ok bool, err error) {
 	vp, err := e.pattern(patternValue, &iidValuePattern)
-	if err != nil || !vp.valid() {
+	if err != nil {
 		return "", false, err
+	}
+	if !vp.valid() {
+		return e.comboSelection()
 	}
 	defer vp.release()
 	var b *uint16
@@ -383,11 +394,17 @@ func (e element) valueOf() (value string, ok bool, err error) {
 }
 
 // valueState reads ValuePattern's value and whether it is read-only; ok is
-// false without the pattern. The caller never asks a password field.
+// false without the pattern. A drop-down without a value (WPF) gives its
+// selected item, read-only: it is chosen, not typed. The caller never asks a
+// password field.
 func (e element) valueState() (value string, readOnly, ok bool, err error) {
 	vp, err := e.pattern(patternValue, &iidValuePattern)
-	if err != nil || !vp.valid() {
+	if err != nil {
 		return "", false, false, err
+	}
+	if !vp.valid() {
+		v, ok, err := e.comboSelection()
+		return v, true, ok, err
 	}
 	defer vp.release()
 	var ro int32
@@ -401,11 +418,63 @@ func (e element) valueState() (value string, readOnly, ok bool, err error) {
 	return readBSTR(b), ro != 0, true, nil
 }
 
-// expanded reports whether a drop-down's list is open.
+// comboSelection reads the name of a drop-down's selected item through
+// SelectionPattern ("" when nothing is selected); ok is false for other
+// controls and for a drop-down without the pattern.
+func (e element) comboSelection() (name string, ok bool, err error) {
+	ct, err := e.controlType()
+	if err != nil || ct != ctComboBox {
+		return "", false, err
+	}
+	sp, err := e.pattern(patternSelection, &iidSelectionPattern)
+	if err != nil || !sp.valid() {
+		return "", false, err
+	}
+	defer sp.release()
+	var arr unsafe.Pointer
+	if err := sp.call(slotSelectionCurrent, uintptr(unsafe.Pointer(&arr))); err != nil {
+		return "", true, fmt.Errorf("read selection: %w", err)
+	}
+	if arr == nil {
+		return "", true, nil
+	}
+	items := comObj{arr}
+	defer items.release()
+	var n int32
+	if err := items.call(slotArrayLength, uintptr(unsafe.Pointer(&n))); err != nil {
+		return "", true, fmt.Errorf("read selection size: %w", err)
+	}
+	if n == 0 {
+		return "", true, nil
+	}
+	var first unsafe.Pointer
+	if err := items.call(slotArrayGetElement, 0, uintptr(unsafe.Pointer(&first))); err != nil {
+		return "", true, fmt.Errorf("read selected item: %w", err)
+	}
+	item := element{comObj{first}}
+	defer item.release()
+	name, err = item.name()
+	return name, true, err
+}
+
+// expanded reports whether a drop-down's list is open. A drop-down without
+// ExpandCollapse (WinForms in compatibility mode, Delphi) is a native combo
+// box, which answers by message.
 func (e element) expanded() (bool, error) {
 	p, err := e.pattern(patternExpandCollapse, &iidExpandCollapsePattern)
-	if err != nil || !p.valid() {
+	if err != nil {
 		return false, err
+	}
+	if !p.valid() {
+		ct, err := e.controlType()
+		if err != nil || ct != ctComboBox {
+			return false, err
+		}
+		h, err := e.nativeWindow()
+		if err != nil || h == 0 {
+			return false, err
+		}
+		return comboDropped(h)
 	}
 	defer p.release()
 	var state int32

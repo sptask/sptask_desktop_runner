@@ -233,7 +233,7 @@ func (p *player) act(step *Step, win topWindow, n *node) error {
 		return p.fill(step, win, e)
 	case StepSelect:
 		p.point(step, e)
-		return p.selectItem(step, e)
+		return p.selectItem(step, win, e)
 	case StepPress:
 		p.point(step, e)
 		if err := e.setFocus(); err != nil {
@@ -333,13 +333,19 @@ func (p *player) fill(step *Step, win topWindow, e element) error {
 }
 
 // selectItem picks the list item named step.Value in a list or drop-down.
-func (p *player) selectItem(step *Step, e element) error {
-	if _, err := e.act(patternExpandCollapse, &iidExpandCollapsePattern); err != nil {
+func (p *player) selectItem(step *Step, win topWindow, e element) error {
+	expanded, err := e.act(patternExpandCollapse, &iidExpandCollapsePattern)
+	if err != nil {
 		return fmt.Errorf("open list: %w", err)
 	}
-	items, err := p.u.descendants(e)
-	if err != nil {
-		return retry(CodeSelectorNotFound, "%v", err)
+	var items []*node
+	if expanded {
+		items, err = p.u.descendants(e)
+		if err != nil {
+			return retry(CodeSelectorNotFound, "%v", err)
+		}
+	} else if items, err = p.openPopupList(win, e); err != nil {
+		return err
 	}
 	defer releaseNodes(items)
 	choice, err := pick(items, []Selector{{Kind: SelectorName, Value: step.Value, ControlType: "ListItem"}})
@@ -369,7 +375,12 @@ func (p *player) selectItem(step *Step, e element) error {
 		if !ok {
 			return botErr(CodeDesktopError, "the item %q cannot be selected", step.Value)
 		}
-		if err := e.collapse(); err != nil {
+		if expanded {
+			err = e.collapse()
+		} else {
+			err = p.pressOpenButton(e)
+		}
+		if err != nil {
 			return fmt.Errorf("close list: %w", err)
 		}
 	}
@@ -381,6 +392,78 @@ func (p *player) selectItem(step *Step, e element) error {
 		return botErr(CodeValueNotSet, "the list shows %q after selecting %q", got, step.Value)
 	}
 	return nil
+}
+
+// openPopupList returns the items of a drop-down that has no open action of
+// its own (WinForms in compatibility mode, Delphi): a person presses its
+// open button, and the list shows in a popup window of the same program.
+// The button opens and closes the list, so it is pressed only while no list
+// is open; the step looks again once the list is there.
+func (p *player) openPopupList(win topWindow, e element) ([]*node, error) {
+	items, err := p.popupListItems(win)
+	if err != nil || items != nil {
+		return items, err
+	}
+	if err := p.pressOpenButton(e); err != nil {
+		return nil, err
+	}
+	return nil, retry(CodeSelectorNotFound, "the drop-down list did not open")
+}
+
+// popupListItems lists the items of an open drop-down list of win's
+// program: a visible popup window of the same program whose control is a
+// list. Nil when no list is open.
+func (p *player) popupListItems(win topWindow) ([]*node, error) {
+	all, err := listTopWindows()
+	if err != nil {
+		return nil, err
+	}
+	for _, tw := range all {
+		if tw.pid != win.pid || tw.hwnd == win.hwnd {
+			continue
+		}
+		root, err := p.u.elementFromHandle(tw.hwnd)
+		if err != nil {
+			continue // the popup closed while it was looked at
+		}
+		ctype, err := root.controlType()
+		if err != nil || ctype != ctList {
+			root.release()
+			continue
+		}
+		items, err := p.u.descendants(root)
+		root.release()
+		if err != nil {
+			return nil, retry(CodeSelectorNotFound, "read the open list: %v", err)
+		}
+		return items, nil
+	}
+	return nil, nil
+}
+
+// pressOpenButton presses the drop-down's own open button.
+func (p *player) pressOpenButton(e element) error {
+	parts, err := p.u.descendants(e)
+	if err != nil {
+		return retry(CodeSelectorNotFound, "%v", err)
+	}
+	defer releaseNodes(parts)
+	for _, n := range parts {
+		if n.ctype != ctButton || strings.Contains(n.path, "/") {
+			continue
+		}
+		ok, err := n.el.act(patternInvoke, &iidInvokePattern)
+		if isNotReady(err) {
+			return retry(CodeSelectorNotFound, "the drop-down's open button is not ready: %v", err)
+		}
+		if err != nil {
+			return fmt.Errorf("press the drop-down's open button: %w", err)
+		}
+		if ok {
+			return nil
+		}
+	}
+	return botErr(CodeDesktopError, "the drop-down cannot be opened: it has no open action and no open button")
 }
 
 // typeText replaces the focused control's text with Ctrl+A and Unicode key

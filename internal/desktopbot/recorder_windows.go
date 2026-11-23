@@ -376,7 +376,26 @@ func (c *captureState) focused(pid uint32) (element, bool) {
 		el.release()
 		return element{}, false
 	}
-	return el, true
+	return c.listOwner(el), true
+}
+
+// listOwner returns the tracked control when el is an item of its open
+// drop-down list, and el otherwise. Some programs (WPF) move the keyboard
+// focus into the open list, which can be a popup window of its own; the
+// person is still choosing a value of the drop-down.
+func (c *captureState) listOwner(el element) element {
+	t := c.cur
+	if t == nil || !t.combo.valid() {
+		return el
+	}
+	if ct, err := el.controlType(); err != nil || ct != ctListItem {
+		return el
+	}
+	if open, err := t.combo.expanded(); err != nil || !open {
+		return el
+	}
+	el.release()
+	return t.el.addRef()
 }
 
 // props reads what identifies a control. A control that vanished while it
@@ -589,7 +608,15 @@ func (c *captureState) keyPress(ev inputEvent) {
 		c.resolvePress()
 	}
 	c.flush()
-	c.settle(ev.at)
+	// What the program changes right after a key is its answer, not the
+	// person's input; but a key that closes an open drop-down list takes the
+	// person's choice (WPF sets the value only then).
+	closesList := false
+	defer func() {
+		if !closesList {
+			c.settle(ev.at)
+		}
+	}()
 	fg := rootWindow(windows.GetForegroundWindow())
 	pid := windowPID(fg)
 	a := c.app(pid)
@@ -608,11 +635,16 @@ func (c *captureState) keyPress(ev inputEvent) {
 	}
 	p := &pendingPress{el: el, hwnd: fg, window: Window{App: a.name, Title: windowTitle(fg)}, ctype: ct,
 		key: keyNames[ev.key], props: props(el), at: ev.at}
-	if ct == ctComboBox {
-		if p.expanded, err = el.expanded(); err != nil {
+	// Enter or Escape in an open drop-down list (also from the edit box of an
+	// editable one) only closes the list.
+	if combo := c.comboOf(el, ct); combo.valid() {
+		p.expanded, err = combo.expanded()
+		combo.release()
+		if err != nil {
 			el.release()
 			return
 		}
+		closesList = p.expanded
 	}
 	if ev.key == keyEnter && (ct == ctEdit || ct == ctDocument) {
 		if pw, err := el.isPassword(); err == nil && !pw {
@@ -731,7 +763,32 @@ func (r *recorder) verifiedSelectors(p pendingCapture) ([]Selector, string, bool
 		unique(Selector{Kind: SelectorClassName, Value: class, ControlType: ctName})
 	}
 	sels = append(sels, Selector{Kind: SelectorPath, Value: n.path})
+	if combo := comboLabel(nodes, n); combo != "" {
+		label = combo
+	}
 	return sels, label, true
+}
+
+// comboLabel names the edit box of an editable drop-down after the
+// drop-down: the box itself only has an internal id ("1001").
+func comboLabel(nodes []*node, n *node) string {
+	i := strings.LastIndex(n.path, "/")
+	if n.ctype != ctEdit || i < 0 {
+		return ""
+	}
+	parent := n.path[:i]
+	for _, c := range nodes {
+		if c.path != parent || c.ctype != ctComboBox {
+			continue
+		}
+		if name, err := c.elementName(); err == nil && strings.TrimSpace(name) != "" {
+			return name
+		}
+		if aid, err := c.automationID(); err == nil && aid != "" {
+			return aid
+		}
+	}
+	return ""
 }
 
 // fallbackSelectors are read while the control was there, for a window that
