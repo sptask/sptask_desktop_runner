@@ -142,6 +142,12 @@ func (a *runnerApp) startReplay(msgID string, params map[string]any) {
 	}
 	headless, _ := params["headless"].(bool)
 	opts := browserbot.ReplayOptions{Headless: headless, Timeout: time.Duration(intParam(params, "timeout_sec")) * time.Second}
+	if _, ok := params["operator"]; ok {
+		if err := decodeParam(params, "operator", &opts.Operator); err != nil {
+			a.reply(msgID, map[string]any{"success": false, "error": err.Error(), "error_code": browserbot.CodeInvalidRecording})
+			return
+		}
+	}
 	err := a.bot.StartReplay(runID, rec, opts, func(res browserbot.ReplayResult) {
 		log.Printf("🤖 Tarayıcı oynatması bitti: %s başarı=%v %s", runID, res.Success, res.ErrorCode)
 		raw, err := json.Marshal(res)

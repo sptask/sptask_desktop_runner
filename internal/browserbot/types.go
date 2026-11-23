@@ -44,8 +44,10 @@ const (
 	CodeLoginRequired      = "LOGIN_REQUIRED"
 	CodeTimeout            = "TIMEOUT"
 	CodeCancelled          = "CANCELLED"
-	CodeInvalidRecording   = "INVALID_RECORDING"
-	CodeBrowserError       = "BROWSER_ERROR"
+	// CodeStoppedByUser: the person at the computer pressed Shift+Esc.
+	CodeStoppedByUser    = "STOPPED_BY_USER"
+	CodeInvalidRecording = "INVALID_RECORDING"
+	CodeBrowserError     = "BROWSER_ERROR"
 )
 
 // Limits keep a recording small enough for one WebSocket/NATS message.

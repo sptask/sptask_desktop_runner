@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/chromedp"
+
+	"github.com/sptask/sptask_desktop_runner/internal/operator"
 )
 
 const (
@@ -24,6 +27,8 @@ const (
 type ReplayOptions struct {
 	Headless bool
 	Timeout  time.Duration
+	// Operator is drawn over a visible replay: whose work the bot is doing.
+	Operator operator.Operator
 }
 
 type activeJob struct {
@@ -243,8 +248,24 @@ func (m *Manager) runReplay(jobCtx context.Context, rec *Recording, opts ReplayO
 		return finish(fail(err, CodeBrowserError))
 	}
 	runCtx, cancelRun := context.WithTimeout(tabCtx, opts.Timeout)
-	res := replay(runCtx, rec, guard, nav)
+	defer cancelRun()
+	var show *overlay
+	var stoppedByUser atomic.Bool
+	if !opts.Headless {
+		show = newOverlay(opts.Operator)
+		if err := installStopKey(tabCtx, func() {
+			stoppedByUser.Store(true)
+			cancelRun()
+		}); err != nil {
+			return finish(fail(err, CodeBrowserError))
+		}
+	}
+	res := replay(runCtx, rec, guard, nav, show)
 	cancelRun()
+	if stoppedByUser.Load() && !res.Success {
+		res.ErrorCode = CodeStoppedByUser
+		res.Error = "the person at the computer stopped the run (Shift+Esc)"
+	}
 	if !res.Success && jobCtx.Err() != nil {
 		res.ErrorCode = CodeCancelled
 	}

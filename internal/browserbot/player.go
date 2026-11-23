@@ -62,28 +62,34 @@ type resolveResult struct {
 	PageURL         string  `json:"page_url"`
 }
 
-// resolveOnce calls the resolver on the page's global object. The selectors
-// and the value travel as call arguments, so page data never becomes script.
-func resolveOnce(ctx context.Context, sels []Selector, action, value string) (resolveResult, error) {
-	return chromedp.Run(ctx, func(ctx context.Context, t *chromedp.Target) (resolveResult, error) {
+// callOnPage calls fn (a function expression) on the page's global object.
+// Every value travels as a call argument, so page data never becomes script.
+func callOnPage[T any](ctx context.Context, fn string, args ...any) (T, error) {
+	return chromedp.Run(ctx, func(ctx context.Context, t *chromedp.Target) (T, error) {
+		var zero T
 		global, err := cdp.Call(ctx, t, runtime.Evaluate, runtime.EvaluateParams{Expression: "globalThis", ObjectGroup: resolverObjectGroup})
 		if err != nil {
-			return resolveResult{}, fmt.Errorf("get page global: %w", err)
+			return zero, fmt.Errorf("get page global: %w", err)
 		}
 		if global.Result == nil || global.Result.ObjectID == "" {
-			return resolveResult{}, errors.New("page global has no object id")
+			return zero, errors.New("page global has no object id")
 		}
 		onGlobal := func(p *runtime.CallFunctionOnParams) { p.ObjectID = global.Result.ObjectID }
-		res, callErr := chromedp.CallFunctionOn[resolveResult](resolverFn, onGlobal, sels, action, value)(ctx, t)
+		res, callErr := chromedp.CallFunctionOn[T](fn, onGlobal, args...)(ctx, t)
 		_, releaseErr := cdp.Call(ctx, t, runtime.ReleaseObjectGroup, runtime.ReleaseObjectGroupParams{ObjectGroup: resolverObjectGroup})
 		if callErr != nil {
-			return resolveResult{}, callErr
+			return zero, callErr
 		}
 		if releaseErr != nil {
-			return resolveResult{}, fmt.Errorf("release page global: %w", releaseErr)
+			return zero, fmt.Errorf("release page global: %w", releaseErr)
 		}
 		return res, nil
 	})
+}
+
+// resolveOnce runs the resolver once for the step's selectors.
+func resolveOnce(ctx context.Context, sels []Selector, action, value string) (resolveResult, error) {
+	return callOnPage[resolveResult](ctx, resolverFn, sels, action, value)
 }
 
 // waitElement polls until the step's element is usable or the wait ends.
@@ -140,6 +146,7 @@ func pathMatchElsewhere(step *Step, res resolveResult) bool {
 type player struct {
 	guard   *originGuard
 	nav     *navWatcher
+	show    *overlay
 	outputs map[string]string
 }
 
@@ -171,6 +178,8 @@ func (p *player) execStep(ctx context.Context, step *Step) error {
 			return botErr(CodeLoginRequired, "the saved browser session has expired; sign in again by recording or opening the runner browser")
 		}
 	}
+	label := stepLabel(step)
+	p.show.draw(ctx, label, noPosition, noPosition)
 
 	switch step.Type {
 	case StepNavigate:
@@ -189,10 +198,17 @@ func (p *player) execStep(ctx context.Context, step *Step) error {
 		if err != nil {
 			return err
 		}
+		if err := p.show.pointAt(ctx, label, res.X, res.Y); err != nil {
+			return err
+		}
 		return p.pageAction(ctx, wait, func() error { return chromedp.Do(ctx, chromedp.MouseClickXY(res.X, res.Y)) })
 
 	case StepFill:
-		if _, err := waitElement(ctx, step, wait, resolveActionFocus, "", func(r resolveResult) bool { return !r.Disabled }); err != nil {
+		res, err := waitElement(ctx, step, wait, resolveActionFocus, "", func(r resolveResult) bool { return !r.Disabled })
+		if err != nil {
+			return err
+		}
+		if err := p.show.pointAt(ctx, label, res.X, res.Y); err != nil {
 			return err
 		}
 		if step.Value == "" {
@@ -272,9 +288,11 @@ func captureScreenshot(ctx context.Context) string {
 }
 
 // replay runs a validated recording in the tab of ctx.
-func replay(ctx context.Context, rec *Recording, guard *originGuard, nav *navWatcher) ReplayResult {
-	p := &player{guard: guard, nav: nav, outputs: map[string]string{}}
-	result := ReplayResult{Outputs: p.outputs}
+// show is nil for a headless replay.
+func replay(ctx context.Context, rec *Recording, guard *originGuard, nav *navWatcher, show *overlay) (result ReplayResult) {
+	p := &player{guard: guard, nav: nav, show: show, outputs: map[string]string{}}
+	result = ReplayResult{Outputs: p.outputs}
+	defer func() { result.Warnings = append(result.Warnings, show.warnings()...) }()
 	for i := range rec.Steps {
 		step := &rec.Steps[i]
 		err := p.execStep(ctx, step)
