@@ -14,6 +14,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/remote"
 )
 
 // Config controls how the runner starts its own browser.
@@ -142,6 +143,8 @@ func newBrowser(parent context.Context, cfg Config, headless bool) (context.Cont
 		opts = append(opts,
 			chromedp.Flag("remote-debugging-port", strconv.Itoa(cfg.DebugPort)),
 			chromedp.Flag("remote-debugging-address", "127.0.0.1"),
+			// A debugging port means a websocket instead of the default pipe.
+			remote.WebSocket,
 		)
 	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parent, opts...)
