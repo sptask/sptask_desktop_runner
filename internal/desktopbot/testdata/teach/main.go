@@ -33,10 +33,7 @@ const (
 	mouseLeftDown   = 0x0002
 	mouseLeftUp     = 0x0004
 	lbGetItemRect   = 0x0198
-	swpNoMove       = 0x0002
-	swpNoSize       = 0x0001
-	swpShowWindow   = 0x0040
-	hwndTopmost     = ^uintptr(0)
+	gaRoot          = 2
 	vkShift         = 0x10
 	vkEscape        = 0x1B
 	// dpiPerMonitorAware2 makes window rectangles and the cursor use the
@@ -56,7 +53,8 @@ var (
 	sendMessageW     = user32.NewProc("SendMessageW")
 	clientToScreen   = user32.NewProc("ClientToScreen")
 	getComboBoxInfo  = user32.NewProc("GetComboBoxInfo")
-	setWindowPos     = user32.NewProc("SetWindowPos")
+	windowFromPoint  = user32.NewProc("WindowFromPoint")
+	getAncestor      = user32.NewProc("GetAncestor")
 	setDpiAwareness  = user32.NewProc("SetProcessDpiAwarenessContext")
 	keyNames         = map[string]uint16{"Enter": 0x0D, "Escape": 0x1B, "Tab": 0x09}
 	errUnknownAction = fmt.Errorf("unknown action")
@@ -117,9 +115,6 @@ func run(title string, actions []string) error {
 	if err != nil {
 		return err
 	}
-	// Other windows (a test browser) may cover the form; a person would
-	// bring it forward. The first click then activates it.
-	setWindowPos.Call(uintptr(form), hwndTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize|swpShowWindow)
 	for _, a := range actions {
 		if err := act(form, a); err != nil {
 			return fmt.Errorf("%s: %w", a, err)
@@ -157,7 +152,7 @@ func act(form windows.HWND, action string) error {
 		}
 		var r rect
 		getWindowRect.Call(uintptr(ctl), uintptr(unsafe.Pointer(&r)))
-		return click((r.left+r.right)/2, (r.top+r.bottom)/2)
+		return click(form, (r.left+r.right)/2, (r.top+r.bottom)/2)
 	case "item":
 		id, index, _ := strings.Cut(arg, ":")
 		return clickItem(form, id, index)
@@ -211,10 +206,17 @@ func clickItem(form windows.HWND, id, index string) error {
 	}
 	pt := struct{ x, y int32 }{(r.left + r.right) / 2, (r.top + r.bottom) / 2}
 	clientToScreen.Call(uintptr(info.list), uintptr(unsafe.Pointer(&pt)))
-	return click(pt.x, pt.y)
+	return click(info.list, pt.x, pt.y)
 }
 
-func click(x, y int32) error {
+// click clicks the screen at x, y once the window there is owner (the form,
+// or the open list of a drop-down), so a covered form fails the test instead
+// of the click landing in another program.
+func click(owner windows.HWND, x, y int32) error {
+	at, _, _ := windowFromPoint.Call(uintptr(uint32(x)) | uintptr(uint32(y))<<32)
+	if root, _, _ := getAncestor.Call(at, gaRoot); windows.HWND(root) != owner {
+		return fmt.Errorf("another window covers the point %d,%d", x, y)
+	}
 	if ok, _, err := setCursorPos.Call(uintptr(x), uintptr(y)); ok == 0 {
 		return fmt.Errorf("move the mouse: %w", err)
 	}

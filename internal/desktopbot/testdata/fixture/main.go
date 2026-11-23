@@ -51,6 +51,9 @@ const (
 	bnClicked      = 0
 	cwUseDefault   = 0x80000000
 	colorWindow    = 5
+	// wsExTopmost keeps the form above other windows, such as a test browser
+	// opened after it: tests click the form where it is on the screen.
+	wsExTopmost = 0x00000008
 )
 
 var (
@@ -186,7 +189,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "register class:", err)
 		os.Exit(2)
 	}
-	hwnd, _, err := createWindowExW.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(*title))),
+	hwnd, _, err := createWindowExW.Call(wsExTopmost, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(*title))),
 		wsOverlapped|wsVisible, cwUseDefault, cwUseDefault, 460, 380, 0, 0, uintptr(instance), 0)
 	if hwnd == 0 {
 		fmt.Fprintln(os.Stderr, "create window:", err)
