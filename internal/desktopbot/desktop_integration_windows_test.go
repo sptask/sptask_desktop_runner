@@ -1,0 +1,319 @@
+//go:build windows && (amd64 || arm64)
+
+package desktopbot
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/sptask/sptask_desktop_runner/internal/joblock"
+	"github.com/sptask/sptask_desktop_runner/internal/operator"
+)
+
+// These tests open a small form on the desktop (testdata/fixture) and act on
+// it only through UI Automation. They are opt-in because a window appears:
+//
+//	SPTASK_DESKTOP_TESTS=1 go test ./internal/desktopbot/
+const fixtureClass = "SpartaskFixtureForm"
+
+type fixture struct {
+	exe, out, title string
+	cmd             *exec.Cmd
+	win             topWindow
+}
+
+func startFixture(t *testing.T) *fixture {
+	t.Helper()
+	if os.Getenv("SPTASK_DESKTOP_TESTS") != "1" {
+		t.Skip("set SPTASK_DESKTOP_TESTS=1 to open the fixture window")
+	}
+	dir := t.TempDir()
+	f := &fixture{
+		exe:   filepath.Join(dir, "spartask-fixture.exe"),
+		out:   filepath.Join(dir, "saves.jsonl"),
+		title: fmt.Sprintf("SparTask Fikstür %d", time.Now().UnixNano()),
+	}
+	build := exec.Command("go", "build", "-o", f.exe, "./testdata/fixture")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fixture: %v\n%s", err, out)
+	}
+	f.cmd = exec.Command(f.exe, "-out", f.out, "-title", f.title)
+	if err := f.cmd.Start(); err != nil {
+		t.Fatalf("start fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := f.cmd.Process.Kill(); err != nil {
+			t.Logf("stop fixture: %v", err)
+		}
+		if err := f.cmd.Wait(); err != nil {
+			t.Logf("fixture ended: %v", err)
+		}
+	})
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		w, ok, err := findTopWindow(Window{App: filepath.Base(f.exe), Title: f.title})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			f.win = w
+			return f
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fixture window did not appear")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (f *fixture) saves(t *testing.T) []map[string]any {
+	t.Helper()
+	file, err := os.Open(f.out)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var out []map[string]any
+	sc := bufio.NewScanner(file)
+	for sc.Scan() {
+		var rec map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+// TestUIAVtableSlots checks every vtable slot the bot uses against answers
+// the fixture is known to give. A wrong slot shows up here, by name.
+func TestUIAVtableSlots(t *testing.T) {
+	f := startFixture(t)
+	u, err := startUIA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.close()
+	err = u.do(func() error {
+		root, err := u.elementFromHandle(f.win.hwnd)
+		if err != nil {
+			return fmt.Errorf("ElementFromHandle: %w", err)
+		}
+		defer root.release()
+		checks := []struct {
+			slot string
+			get  func() (any, error)
+			want any
+		}{
+			{"get_CurrentNativeWindowHandle", func() (any, error) { return root.nativeWindow() }, f.win.hwnd},
+			{"get_CurrentName", func() (any, error) { return root.name() }, f.title},
+			{"get_CurrentClassName", func() (any, error) { return root.className() }, fixtureClass},
+			{"get_CurrentProcessId", func() (any, error) { return root.processID() }, f.win.pid},
+			{"get_CurrentControlType", func() (any, error) { return root.controlType() }, int32(50032)},
+		}
+		for _, c := range checks {
+			got, err := c.get()
+			if err != nil || got != c.want {
+				return fmt.Errorf("%s: got %v (%v), want %v", c.slot, got, err, c.want)
+			}
+		}
+		nodes, err := u.descendants(root)
+		if err != nil {
+			return fmt.Errorf("tree walker: %w", err)
+		}
+		defer releaseNodes(nodes)
+		byID := map[string]*node{}
+		for _, n := range nodes {
+			id, err := n.automationID()
+			if err != nil {
+				return fmt.Errorf("get_CurrentAutomationId: %w", err)
+			}
+			byID[id] = n
+		}
+		for _, id := range []string{"101", "102", "103", "104", "201", "202", "301"} {
+			if byID[id] == nil {
+				return fmt.Errorf("get_CurrentAutomationId / walker: control %s missing (found %d controls)", id, len(nodes))
+			}
+		}
+		if ct := byID["101"].ctype; ct != 50004 {
+			return fmt.Errorf("get_CurrentControlType of the name box: %d", ct)
+		}
+		for id, want := range map[string]bool{"101": false, "103": true} {
+			got, err := byID[id].el.isPassword()
+			if err != nil || got != want {
+				return fmt.Errorf("get_CurrentIsPassword of %s: %v (%v)", id, got, err)
+			}
+		}
+		for id, want := range map[string]bool{"201": true, "202": false} {
+			got, err := byID[id].el.isEnabled()
+			if err != nil || got != want {
+				return fmt.Errorf("get_CurrentIsEnabled of %s: %v (%v)", id, got, err)
+			}
+		}
+		if off, err := byID["201"].el.isOffscreen(); err != nil || off {
+			return fmt.Errorf("get_CurrentIsOffscreen: %v (%v)", off, err)
+		}
+		r, err := byID["201"].el.bounds()
+		if err != nil || r.Right-r.Left < 50 || r.Bottom-r.Top < 15 {
+			return fmt.Errorf("get_CurrentBoundingRectangle: %+v (%v)", r, err)
+		}
+		if ok, err := byID["101"].el.setValue("Deneme"); !ok || err != nil {
+			return fmt.Errorf("ValuePattern.SetValue: %v %v", ok, err)
+		}
+		if v, ok, err := byID["101"].el.valueOf(); !ok || err != nil || v != "Deneme" {
+			return fmt.Errorf("ValuePattern.get_CurrentValue: %q %v %v", v, ok, err)
+		}
+		if ok, err := byID["301"].el.setValue("x"); ok || err != nil {
+			return fmt.Errorf("a label took a value: %v %v", ok, err)
+		}
+		if ok, err := byID["201"].el.act(patternInvoke, &iidInvokePattern); !ok || err != nil {
+			return fmt.Errorf("InvokePattern.Invoke: %v %v", ok, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitSaves(t, f, 1)
+}
+
+func waitSaves(t *testing.T, f *fixture, n int) []map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := f.saves(t)
+		if len(got) >= n || time.Now().After(deadline) {
+			if len(got) != n {
+				t.Fatalf("want %d saves, got %d: %v", n, len(got), got)
+			}
+			return got
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func approvedPolicy(t *testing.T, exe string) *Policy {
+	t.Helper()
+	p, err := LoadPolicy(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Approve(exe); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func fixtureRecording(f *fixture, steps ...Step) Recording {
+	app := strings.ToLower(filepath.Base(f.exe))
+	for i := range steps {
+		steps[i].Window = Window{App: app, Title: f.title}
+	}
+	return Recording{ID: "fixture", AllowedApps: []string{app}, Steps: steps}
+}
+
+func byAutomationID(id string) []Selector {
+	return []Selector{{Kind: SelectorClassName, Value: "Edit"}, {Kind: SelectorAutomationID, Value: id}}
+}
+
+func replayNow(t *testing.T, p *Policy, rec Recording, timeout time.Duration) ReplayResult {
+	t.Helper()
+	m := NewManager(context.Background(), p, &joblock.Lock{})
+	done := make(chan ReplayResult, 1)
+	if err := m.StartReplay("t", rec, ReplayOptions{Timeout: timeout, Operator: operator.Operator{Name: "Ada (AI)", Color: "#0ea5e9"}}, func(r ReplayResult) { done <- r }); err != nil {
+		t.Fatal(err)
+	}
+	res := <-done
+	m.Wait()
+	return res
+}
+
+func TestDesktopReplayFillsTheForm(t *testing.T) {
+	f := startFixture(t)
+	rec := fixtureRecording(f,
+		Step{Type: StepFocusWindow, Optional: true},
+		// class_name "Edit" matches every box and is skipped as ambiguous.
+		Step{Type: StepFill, Selectors: byAutomationID("101"), Value: "Ayşe Yılmaz", Label: "Müşteri adı"},
+		Step{Type: StepFill, Selectors: byAutomationID("102"), Value: "Satır 1\nSatır 2", Label: "Not"},
+		Step{Type: StepFill, Selectors: byAutomationID("103"), Value: "gizli", Label: "Şifre", Sensitive: true},
+		Step{Type: StepSelect, Selectors: []Selector{{Kind: SelectorAutomationID, Value: "104"}}, Value: "Kart", Label: "Ödeme"},
+		Step{Type: StepClick, Selectors: []Selector{{Kind: SelectorName, Value: "Kaydet", ControlType: "Button"}}, Label: "Kaydet"},
+		Step{Type: StepAssertText, Selectors: []Selector{{Kind: SelectorAutomationID, Value: "301"}}, Value: "Kaydedildi: 1"},
+		Step{Type: StepExtractText, Selectors: []Selector{{Kind: SelectorAutomationID, Value: "301"}}, OutputKey: "durum"},
+	)
+	res := replayNow(t, approvedPolicy(t, f.exe), rec, time.Minute)
+	if !res.Success {
+		t.Fatalf("replay failed: %+v", res)
+	}
+	got := waitSaves(t, f, 1)[0]
+	if got["name"] != "Ayşe Yılmaz" || !sameText(fmt.Sprint(got["note"]), "Satır 1\nSatır 2") || got["secret_length"] != float64(5) || got["payment"] != "Kart" {
+		t.Fatalf("the program received %v", got)
+	}
+	if res.Outputs["durum"] != "Kaydedildi: 1" {
+		t.Fatalf("outputs %v", res.Outputs)
+	}
+}
+
+func TestDesktopReplayRefuses(t *testing.T) {
+	f := startFixture(t)
+	fill := Step{Type: StepFill, Selectors: byAutomationID("101"), Value: "x", TimeoutMS: 1500}
+
+	unapproved, err := LoadPolicy(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := replayNow(t, unapproved, fixtureRecording(f, fill), time.Minute); res.ErrorCode != CodeAppNotApproved {
+		t.Fatalf("an unapproved program was automated: %+v", res)
+	}
+
+	p := approvedPolicy(t, f.exe)
+	disabled := Step{Type: StepClick, Selectors: []Selector{{Kind: SelectorAutomationID, Value: "202"}}, TimeoutMS: 1500}
+	if res := replayNow(t, p, fixtureRecording(f, disabled), time.Minute); res.ErrorCode != CodeSelectorNotFound {
+		t.Fatalf("a disabled button was clicked: %+v", res)
+	}
+	missing := Step{Type: StepFill, Selectors: byAutomationID("999"), Value: "x", TimeoutMS: 1500}
+	if res := replayNow(t, p, fixtureRecording(f, missing), time.Minute); res.ErrorCode != CodeSelectorNotFound {
+		t.Fatalf("a missing control: %+v", res)
+	}
+	closed := fixtureRecording(f, fill)
+	closed.Steps[0].Window.Title = "Kapalı pencere"
+	if res := replayNow(t, p, closed, time.Minute); res.ErrorCode != CodeAppNotRunning {
+		t.Fatalf("a closed window: %+v", res)
+	}
+	if got := f.saves(t); len(got) != 0 {
+		t.Fatalf("nothing should have been saved: %v", got)
+	}
+}
+
+func TestDesktopReplayStopsWhenThePersonTakesOver(t *testing.T) {
+	f := startFixture(t)
+	wait := Step{Type: StepWaitFor, Selectors: byAutomationID("999"), TimeoutMS: 30000}
+	go func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if o := activeOverlay.Load(); o != nil {
+				o.takeOver() // what a physical click or Shift+Esc does
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	res := replayNow(t, approvedPolicy(t, f.exe), fixtureRecording(f, wait), time.Minute)
+	if res.ErrorCode != CodeStoppedByUser {
+		t.Fatalf("want STOPPED_BY_USER, got %+v", res)
+	}
+	if activeOverlay.Load() != nil {
+		t.Fatal("the overlay is still showing")
+	}
+}

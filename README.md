@@ -82,6 +82,39 @@ chmod +x sptask-runner
 > panelinde yeni bir cihaz olarak görünür. Testlerde biriken eski cihazları **Masaüstü Asistanları (Desktop Runner)**
 > ekranından silin. Hata ayıklama portu tarayıcının tam denetimini verir: yalnızca test makinesinde kullanın.
 
+### 3. Masaüstü programlarına veri girme (Windows)
+
+Runner, Windows UI Automation ile herhangi bir programın (eczane, muhasebe, ERP istemcisi…) penceresindeki
+alanlara yazabilir, düğmelerine basabilir, listelerinden seçim yapabilir ve metin okuyabilir. Runner'da hiçbir
+programa özel kod yoktur: hangi pencerenin hangi alanına ne yazılacağı süreçten gelen kayıttadır.
+
+Güvenlik kuralları:
+
+- Bot yalnızca **bu bilgisayarda onaylanmış** programlarda çalışır. Onayı sunucu veremez; kaydın izinli
+  program listesi bu onayı yalnızca daraltabilir.
+- Komut kabukları, betik motorları, Dosya Gezgini, Görev Yöneticisi, yönetim konsolları, oturum/UAC
+  pencereleri, tarayıcılar ve runner'ın kendisi hiçbir zaman onaylanamaz. Yönetici olarak çalışan pencerelere
+  dokunulmaz.
+- Hiçbir adım program başlatmaz; program açık değilse adım `APP_NOT_RUNNING` ile durur.
+- Değerler UI Automation ile verilir ve geri okunarak doğrulanır. Gerçek tuş gerekirse önce hedef programın
+  klavyeyi aldığı kontrol edilir.
+- Bot çalışırken ekranda AI çalışanın renkli imleci, adı ve yaptığı adım görünür. Bilgisayarın başındaki kişi
+  fareye tıklar, bir tuşa ya da **Shift+Esc**'ye basarsa iş `STOPPED_BY_USER` ile durur.
+- Bilgisayar kilitliyse iş `WORKSTATION_LOCKED` ile durur.
+
+```bash
+# Programı onayla / onayı kaldır / onaylıları listele (yalnızca bu bilgisayarda)
+./sptask-runner --approve-app="C:\Program Files\Eczane\eczane.exe"
+./sptask-runner --revoke-app="C:\Program Files\Eczane\eczane.exe"
+./sptask-runner --list-apps
+
+# Geliştirme: eşleştirme olmadan bir masaüstü kaydını oynat
+./sptask-runner --desktop-replay=masaustu-kaydi.json
+
+# Geliştirici testleri: küçük bir test penceresi açılır
+SPTASK_DESKTOP_TESTS=1 go test ./internal/desktopbot/
+```
+
 ---
 
 ## 🛠️ Kaynak Koddan Derleme

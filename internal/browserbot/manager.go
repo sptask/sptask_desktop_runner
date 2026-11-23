@@ -37,6 +37,7 @@ type activeJob struct {
 	cancel context.CancelFunc // ends a replay
 	stop   chan struct{}      // finishes a recording and keeps its steps
 	tabCtx context.Context    // the recording tab, read by package tests
+	unlock func()             // releases the runner-wide job lock
 }
 
 // Manager runs at most one browser job at a time, because recording and
@@ -65,6 +66,13 @@ func (m *Manager) claim(id, kind string) (*activeJob, error) {
 		return nil, botErr(CodeBusy, "another browser job (%s %s) is running", m.active.kind, m.active.id)
 	}
 	job := &activeJob{id: id, kind: kind, stop: make(chan struct{})}
+	if m.cfg.Jobs != nil {
+		unlock, holder, ok := m.cfg.Jobs.TryAcquire("browser " + kind + " " + id)
+		if !ok {
+			return nil, botErr(CodeBusy, "another job (%s) is running", holder)
+		}
+		job.unlock = unlock
+	}
 	m.active = job
 	return job, nil
 }
@@ -74,6 +82,9 @@ func (m *Manager) release(job *activeJob) {
 	defer m.mu.Unlock()
 	if m.active == job {
 		m.active = nil
+	}
+	if job.unlock != nil {
+		job.unlock()
 	}
 }
 

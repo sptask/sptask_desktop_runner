@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/sptask/sptask_desktop_runner/internal/browserbot"
+	"github.com/sptask/sptask_desktop_runner/internal/desktopbot"
+	"github.com/sptask/sptask_desktop_runner/internal/joblock"
 	"github.com/sptask/sptask_desktop_runner/internal/notify"
 	"github.com/sptask/sptask_desktop_runner/internal/protocol"
 )
@@ -37,41 +39,59 @@ type runnerOptions struct {
 
 var runnerOpts runnerOptions
 
+// runnerJobs lets one bot (browser or desktop) act on this computer at a time.
+var runnerJobs = &joblock.Lock{}
+
 // browserConfig is the browser setup of this runner: the profile lives next
 // to device.json.
 func browserConfig(browserPath string) browserbot.Config {
 	return browserbot.Config{
 		ExecPath:   browserPath,
-		ProfileDir: filepath.Join(filepath.Dir(getConfigPath()), "browser-profile"),
+		ProfileDir: filepath.Join(dataDir(), "browser-profile"),
 		DebugPort:  runnerOpts.browserDebugPort,
+		Jobs:       runnerJobs,
 	}
 }
 
-// runnerApp holds what the command handlers share. Browser commands run on
-// tracked goroutines so a long replay never blocks the WebSocket read loop.
+// runnerApp holds what the command handlers share. Browser and desktop
+// commands run on tracked goroutines so a long replay never blocks the
+// WebSocket read loop.
 type runnerApp struct {
 	ws        *SafeWebSocket
 	bot       *browserbot.Manager
+	desk      *desktopbot.Manager
+	deskErr   error // why desk is nil
 	jobs      sync.WaitGroup
 	outboxDir string
 	outboxMu  sync.Mutex
 }
 
 func newRunnerApp(ctx context.Context, ws *SafeWebSocket, browserPath string) (*runnerApp, error) {
-	outbox := filepath.Join(filepath.Dir(getConfigPath()), "outbox")
+	outbox := filepath.Join(dataDir(), "outbox")
 	if err := os.MkdirAll(outbox, 0o700); err != nil {
 		return nil, fmt.Errorf("create outbox %s: %w", outbox, err)
 	}
-	return &runnerApp{
+	app := &runnerApp{
 		ws:        ws,
 		bot:       browserbot.NewManager(ctx, browserConfig(browserPath)),
 		outboxDir: outbox,
-	}, nil
+	}
+	// A broken approvals file turns off desktop commands, not the runner.
+	if policy, err := desktopbot.LoadPolicy(dataDir()); err != nil {
+		app.deskErr = err
+		log.Printf("⚠️ Masaüstü botu kapalı: %v", err)
+	} else {
+		app.desk = desktopbot.NewManager(ctx, policy, runnerJobs)
+	}
+	return app, nil
 }
 
-// Wait returns after every browser job and command goroutine has ended.
+// Wait returns after every bot job and command goroutine has ended.
 func (a *runnerApp) Wait() {
 	a.bot.Wait()
+	if a.desk != nil {
+		a.desk.Wait()
+	}
 	a.jobs.Wait()
 }
 

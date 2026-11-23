@@ -75,7 +75,7 @@ func (o *overlay) warnings() []string {
 // stepLabel says in the run's language what the bot is doing. It never shows
 // the value being typed: it may be personal data.
 func stepLabel(step *Step) string {
-	name := step.Label
+	name := operator.FieldName(step.Label)
 	if utf8.RuneCountInString(name) > maxOverlayLabel {
 		name = string([]rune(name)[:maxOverlayLabel]) + "…"
 	}

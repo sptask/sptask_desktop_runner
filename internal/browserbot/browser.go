@@ -15,6 +15,8 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/remote"
+
+	"github.com/sptask/sptask_desktop_runner/internal/joblock"
 )
 
 // Config controls how the runner starts its own browser.
@@ -28,6 +30,9 @@ type Config struct {
 	// 127.0.0.1. Only the --browser-debug-port command-line flag sets it: an
 	// end-to-end test drives the recording browser through it.
 	DebugPort int
+	// Jobs, when set, is the runner-wide lock the desktop bot shares: only one
+	// bot acts on this computer at a time.
+	Jobs *joblock.Lock
 
 	// headlessRecording lets package tests drive a recording without a window.
 	headlessRecording bool

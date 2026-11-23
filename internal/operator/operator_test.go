@@ -25,3 +25,11 @@ func TestNormalized(t *testing.T) {
 		t.Errorf("long name kept %d characters", n)
 	}
 }
+
+func TestFieldName(t *testing.T) {
+	for in, want := range map[string]string{"Müşteri adı*": "Müşteri adı", " Not \n": "Not", "Tutar *": "Tutar", "*": ""} {
+		if got := FieldName(in); got != want {
+			t.Errorf("FieldName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

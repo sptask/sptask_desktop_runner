@@ -77,11 +77,32 @@ func main() {
 	headlessFlag := flag.Bool("headless", false, "Geliştirme: --replay sırasında tarayıcı penceresini gösterme")
 	dataDirFlag := flag.String("data-dir", "", "Cihaz bilgisi, tarayıcı profili ve giden kutusu klasörü (boşsa kullanıcının Spartask klasörü)")
 	browserDebugPortFlag := flag.Int("browser-debug-port", 0, "Geliştirme/test: runner tarayıcısını yalnızca 127.0.0.1 üzerinde bu hata ayıklama portuyla açar")
+	approveAppFlag := flag.String("approve-app", "", "Masaüstü botunun çalışabileceği programı onayla (exe tam yolu); yalnızca bu bilgisayardan yapılır")
+	revokeAppFlag := flag.String("revoke-app", "", "Bir programın masaüstü botu onayını kaldır (exe tam yolu)")
+	listAppsFlag := flag.Bool("list-apps", false, "Masaüstü botu için onaylı programları listele")
+	desktopReplayFlag := flag.String("desktop-replay", "", "Geliştirme: verilen masaüstü kayıt dosyasını oynat (eşleştirme gerekmez)")
 	flag.Parse()
 	runnerOpts = runnerOptions{dataDir: *dataDirFlag, browserDebugPort: *browserDebugPortFlag}
 
 	if *versionFlag {
 		fmt.Printf("Spartask Desktop Runner %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
+		return
+	}
+
+	if *approveAppFlag != "" || *revokeAppFlag != "" || *listAppsFlag {
+		if err := runAppApprovals(*approveAppFlag, *revokeAppFlag, *listAppsFlag); err != nil {
+			log.Fatalf("❌ %v", err)
+		}
+		return
+	}
+
+	if *desktopReplayFlag != "" {
+		devCtx, stopDev := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		devErr := runDevDesktopReplay(devCtx, *desktopReplayFlag)
+		stopDev()
+		if devErr != nil {
+			log.Fatalf("❌ %v", devErr)
+		}
 		return
 	}
 
@@ -436,6 +457,10 @@ func handleIncomingCommand(app *runnerApp, msg protocol.DesktopMessage) {
 		log.Printf("⚡ Görev Alındı: %s", action)
 		if strings.HasPrefix(action, "browser.") {
 			app.handleBrowserCommand(msg.ID, action, params)
+			return
+		}
+		if strings.HasPrefix(action, "desktop.") {
+			app.handleDesktopCommand(msg.ID, action, params)
 			return
 		}
 

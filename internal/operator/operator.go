@@ -50,3 +50,10 @@ func (o Operator) Normalized() Operator {
 	}
 	return Operator{Name: name, Color: color}
 }
+
+// FieldName is a control's label as the overlay shows it: one line, without
+// the "*" that forms put after a required field's label.
+func FieldName(label string) string {
+	name := strings.Join(strings.Fields(label), " ")
+	return strings.TrimSpace(strings.TrimSuffix(name, "*"))
+}
